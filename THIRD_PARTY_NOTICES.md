@@ -12,4 +12,4 @@ AirsimX is an independently maintained **derivative of Microsoft AirSim**, not a
 | PX4, ROS 2 and learning libraries | Separately installed; not vendored here. PX4 and ROS packages keep their own licenses. Python dependency versions are in `PythonClient/requirements*.txt`; wheels can include additional third-party notices. |
 | External navigation software, bags and training outputs | Not distributed. Only AirsimX-side adapter/recording code is included. |
 
-The README art is an original schematic, not a capture of a third-party environment. Star charts use aggregate data from this repository. This inventory describes what is in this source preview; it is not a clearance for redistributing a compiled game, engine content or dependency bundle.
+The README cover combines an original 3D quadrotor render with a procedurally illustrated alpine landscape. It is artwork, not a simulator screenshot or flight record. Star charts use aggregate data from this repository. This inventory describes what is in this source preview; it is not a clearance for redistributing a compiled game, engine content or dependency bundle.

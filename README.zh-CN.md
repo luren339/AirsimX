@@ -2,7 +2,10 @@
 
 [English](README.md) · [安装与构建](docs/airsimx/windows-development.md) · [验证记录](docs/airsimx/validation.md) · [源码预览版本](https://github.com/naipi11/AirsimX/releases)
 
-![示意图：一架四旋翼用雷达扫描 Blocks 场景中的建筑](docs/airsimx/media/blocks-scan.svg)
+<picture>
+  <source media="(max-width: 600px)" srcset="docs/airsimx/media/ridge-flight-mobile.jpg">
+  <img src="docs/airsimx/media/ridge-flight.jpg" alt="AirsimX — Unreal Engine 5 / PX4 SITL。原创封面：晨光中，一架四旋翼侧倾飞过高山。">
+</picture>
 
 **用 Unreal 显示场景，用软件里的 PX4 控制多旋翼，再用记录核对实验。** AirsimX 把 UE 5.8.4、PX4 v1.17.0 软件在环仿真（SITL）、ROS 2 Jazzy 和 Gymnasium 接到一起。沿用 AirLib 动力学、`import airsim`、RPC 名称和 Unreal 的 `AirSim` 模块，不需要为了换渲染引擎重写客户端。
 

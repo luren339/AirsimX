@@ -2,7 +2,10 @@
 
 [简体中文](README.zh-CN.md) · [Getting started](docs/airsimx/windows-development.md) · [Validation](docs/airsimx/validation.md) · [Source preview releases](https://github.com/naipi11/AirsimX/releases)
 
-![AirsimX: a quadrotor scans an illustrated Blocks scene](docs/airsimx/media/blocks-scan.svg)
+<picture>
+  <source media="(max-width: 600px)" srcset="docs/airsimx/media/ridge-flight-mobile.jpg">
+  <img src="docs/airsimx/media/ridge-flight.jpg" alt="AirsimX — Unreal Engine 5 / PX4 SITL. Cover illustration of a quadrotor banking above alpine ridges at dawn.">
+</picture>
 
 **Run PX4 in software, fly in Unreal, and keep the evidence.** AirsimX is a multirotor simulation workbench for Unreal Engine 5.8.4. It pairs a PX4 v1.17.0 software-in-the-loop (SITL) build with an AirSim-compatible Python client, a ROS 2 Jazzy bridge, and Gymnasium environments. Existing clients still use `import airsim`; the Unreal module is still `AirSim`.
 
