@@ -37,14 +37,11 @@ py -3.12 -m venv .venv
 
 [验证范围与未验证项](docs/airsimx/validation.md)。本项目面向仿真，不提供真机部署或 HITL 验收结论。
 
-## Star 记录
+## Star History
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/airsimx/media/star-history-dark.svg">
-  <img src="docs/airsimx/media/star-history.svg" alt="新仓库的 GitHub Star 观测，日期为 UTC；具体数值见数据表。">
-</picture>
+[![naipi11/AirsimX 的 Star 历史图](https://api.star-history.com/svg?repos=naipi11/AirsimX&type=Date)](https://www.star-history.com/#naipi11/AirsimX&Date)
 
-[按日观测数据](docs/airsimx/media/stars.csv) · [GitHub 当前 Star](https://github.com/naipi11/AirsimX/stargazers)。只统计 **naipi11/AirsimX**，不继承微软仓库或旧 fork 的数字；只有一次观测时不画增长曲线。[刷新方法](docs/airsimx/community.md)。
+[查看 GitHub 当前 Star 数](https://github.com/naipi11/AirsimX/stargazers)
 
 ## 来源与许可
 

@@ -37,14 +37,11 @@ On the development setup, two PX4 instances ran in lockstep, and three ran indep
 
 The source preview does **not** claim hardware-in-the-loop support, a real-aircraft deployment, certified navigation, or validated flight on every operating system. The original AirLib dynamics are retained; changing the renderer is not a measurement of physical accuracy.
 
-## Repository stars
+## Star History
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/airsimx/media/star-history-dark.svg">
-  <img src="docs/airsimx/media/star-history.svg" alt="Observed GitHub star counts for naipi11/AirsimX; the values and UTC dates are available in the data table.">
-</picture>
+[![Star History Chart for naipi11/AirsimX](https://api.star-history.com/svg?repos=naipi11/AirsimX&type=Date)](https://www.star-history.com/#naipi11/AirsimX&Date)
 
-[View the observations](docs/airsimx/media/stars.csv) · [Current count on GitHub](https://github.com/naipi11/AirsimX/stargazers). This is a dated snapshot for **this repository only**. A single point is not a trend. The chart [can be refreshed](docs/airsimx/community.md) without collecting usernames.
+[Current star count on GitHub](https://github.com/naipi11/AirsimX/stargazers)
 
 ## Credit and license
 
