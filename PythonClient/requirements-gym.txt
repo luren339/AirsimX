@@ -1,0 +1,3 @@
+# Gymnasium validation extras; install after the base requirements.
+# Validated with Python 3.12 on Windows and Ubuntu 24.04.
+gymnasium==1.4.0

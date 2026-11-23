@@ -1,0 +1,12 @@
+# Runtime dependencies of the airsim client package.
+#
+# The SDK talks MessagePack-RPC directly over sockets; the old
+# msgpack-rpc-python / tornado stack was removed and must not be installed.
+# Pinned versions used for validation are in requirements-v01-windows.txt.
+# pyaudio is only needed by the microphone example; opencv by the image tools.
+msgpack
+numpy
+# For airsim.pfm (depth maps read/written as .pfm):
+matplotlib
+# Optional: needed by the computer-vision examples only.
+# opencv-contrib-python

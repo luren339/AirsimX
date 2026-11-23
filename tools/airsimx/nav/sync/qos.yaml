@@ -1,0 +1,21 @@
+# Jazzy rosbag2 subscriptions, not publisher settings. Only the map and durable
+# objective channels need late-join history; a volatile reader also matches a
+# transient-local writer (used for PX4 state on some graphs).
+/clock: &stream {history: keep_last, depth: 100, reliability: best_effort, durability: volatile}
+/fmu/out/vehicle_local_position_v1: *stream
+/fmu/out/vehicle_attitude: *stream
+/fmu/out/vehicle_status_v1: *stream
+/drone_city_nav/vehicle_state: *stream
+/drone_city_nav/raw_obstacle_snapshot_3d: &base {history: keep_last, depth: 4, reliability: reliable, durability: transient_local}
+/drone_city_nav/raw_obstacle_delta_3d: {history: keep_last, depth: 32, reliability: best_effort, durability: transient_local}
+/drone_city_nav/obstacle_memory_status: {history: keep_last, depth: 100, reliability: reliable, durability: transient_local}
+/drone_city_nav/latest_sensor_obstacle_scan: *stream
+/drone_city_nav/mppi/status: *stream
+/drone_city_nav/mppi/applied_control: {history: keep_last, depth: 100, reliability: reliable, durability: volatile}
+/drone_city_nav/navigation_objective: *base
+/drone_city_nav/mission_waypoint_acknowledgement: *base
+/drone_city_nav/mission_events: *stream
+/drone_city_nav/truth/odom: *stream
+/lidar_3d/points: {history: keep_last, depth: 8, reliability: best_effort, durability: volatile}
+/barometer/air_pressure: *stream
+/magnetometer/magnetic_field: *stream

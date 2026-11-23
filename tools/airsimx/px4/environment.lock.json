@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "scope": "simulation-only; never apply these environment choices to flight hardware",
+  "px4": {
+    "repository": "https://github.com/PX4/PX4-Autopilot.git",
+    "tag": "v1.17.0",
+    "tag_object": "a5eb12d2ab591251faa009f76b2685b8cc64405d",
+    "commit": "d6f12ad1c4f70ad3230afd7d86e971421e02fef4"
+  },
+  "ubuntu": {
+    "version": "24.04.5",
+    "filename": "ubuntu-24.04.5-wsl-amd64.wsl",
+    "base_url": "https://releases.ubuntu.com/noble/",
+    "sha256": "bb415d824822c4b878125729af451a5d18fb13d1cf5cbed9a7393ad64ac6039e",
+    "signing_key_fingerprint": "843938DF228D22F7B3742BC0D94AA3F0EFE21092",
+    "signing_key_url": "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x843938DF228D22F7B3742BC0D94AA3F0EFE21092"
+  },
+  "wsl": {
+    "name": "AirsimX-PX4-Ubuntu24",
+    "version": 2,
+    "environment_subdirectory": "WSL/AirsimX-PX4-Ubuntu24"
+  }
+}

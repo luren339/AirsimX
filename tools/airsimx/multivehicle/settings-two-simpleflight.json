@@ -1,0 +1,39 @@
+{
+  "SettingsVersion": 1.2,
+  "SimMode": "Multirotor",
+  "LocalHostIp": "127.0.0.1",
+  "ApiServerPort": 41451,
+  "ClockSpeed": 1.0,
+  "ViewMode": "SpringArmChase",
+  "Vehicles": {
+    "Drone1": {
+      "VehicleType": "SimpleFlight",
+      "AutoCreate": true,
+      "DefaultVehicleState": "Disarmed",
+      "X": 0, "Y": 0, "Z": 0,
+      "Yaw": 0,
+      "Sensors": {
+        "Imu": {"SensorType": 2, "Enabled": true},
+        "Gps": {"SensorType": 3, "Enabled": true},
+        "Barometer": {"SensorType": 1, "Enabled": true}
+      }
+    },
+    "Drone2": {
+      "VehicleType": "SimpleFlight",
+      "AutoCreate": true,
+      "DefaultVehicleState": "Disarmed",
+      "X": 800, "Y": 0, "Z": 0,
+      "Yaw": 0,
+      "Sensors": {
+        "Imu": {"SensorType": 2, "Enabled": true},
+        "Gps": {"SensorType": 3, "Enabled": true},
+        "Barometer": {"SensorType": 1, "Enabled": true}
+      }
+    }
+  },
+  "CameraDefaults": {
+    "CaptureSettings": [
+      {"ImageType": 0, "Width": 256, "Height": 144}
+    ]
+  }
+}

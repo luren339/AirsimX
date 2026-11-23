@@ -1,0 +1,102 @@
+{
+  "SettingsVersion": 1.2,
+  "SimMode": "Multirotor",
+  "ClockType": "SteppableClock",
+  "ClockSpeed": 1.0,
+  "LocalHostIp": "127.0.0.1",
+  "ApiServerPort": 41452,
+  "ViewMode": "SpringArmChase",
+  "Vehicles": {
+    "PX4SITL": {
+      "VehicleType": "PX4Multirotor",
+      "UseSerial": false,
+      "UseTcp": true,
+      "TcpPort": 4560,
+      "LocalHostIp": "127.0.0.1",
+      "ControlIp": "127.0.0.1",
+      "ControlPortLocal": 14540,
+      "ControlPortRemote": 14580,
+      "LockStep": true,
+      "Sensors": {
+        "Imu": {
+          "SensorType": 2,
+          "Enabled": true,
+          "AngularRandomWalk": 0.3,
+          "GyroBiasStabilityTau": 500,
+          "GyroBiasStability": 4.6,
+          "VelocityRandomWalk": 0.24,
+          "AccelBiasStabilityTau": 800,
+          "AccelBiasStability": 36,
+          "AccelScaleFactor": 1.0,
+          "AccelNonlinearity": 0.005,
+          "AccelMisalignment": 0.002,
+          "AccelTurnOnBias": 3.0,
+          "GyroScaleFactor": 1.0,
+          "GyroMisalignment": 0.001
+        },
+        "Gps": {
+          "SensorType": 3,
+          "Enabled": true,
+          "PositionNoiseSigma": 0.6,
+          "VerticalNoiseSigma": 1.0,
+          "VelocityNoiseSigma": 0.05,
+          "UpdateFrequency": 10,
+          "UpdateLatency": 0.1,
+          "EphFinal": 0.6,
+          "EpvFinal": 1.0,
+          "NoiseTau": 60,
+          "SatelliteModel": true,
+          "Uere": 0.8,
+          "SatsMin": 7,
+          "SatsMax": 15,
+          "SatsReference": 10,
+          "HdopAtReference": 0.9,
+          "VdopRatio": 1.6,
+          "SatsTau": 120,
+          "SatsMin3d": 5,
+          "SatsMin2d": 4,
+          "ObstructionProbabilityPerSecond": 0.0005,
+          "ObstructionSeconds": 4,
+          "ObstructionHdopFactor": 2.0
+        },
+        "Barometer": {
+          "SensorType": 1,
+          "Enabled": true,
+          "PressureFactorSigma": 0.0001825,
+          "PressureFactorTau": 3600,
+          "UncorrelatedNoiseSigma": 2.7,
+          "UpdateFrequency": 50
+        },
+        "Magnetometer": {
+          "SensorType": 4,
+          "Enabled": true,
+          "NoiseSigma": 0.005,
+          "UpdateFrequency": 50
+        }
+      },
+      "Parameters": {
+        "COM_RC_IN_MODE": 4,
+        "COM_OBL_RC_ACT": 4,
+        "COM_OF_LOSS_T": 1.0,
+        "EKF2_HGT_REF": 0,
+        "COM_DISARM_PRFLT": 120.0,
+        "SIM_BAT_DRAIN": 43200.0,
+        "SIM_BAT_MIN_PCT": 100.0
+      }
+    }
+  },
+  "CameraDefaults": {
+    "CaptureSettings": [
+      {
+        "ImageType": 0,
+        "Width": 256,
+        "Height": 144
+      },
+      {
+        "ImageType": 1,
+        "Width": 256,
+        "Height": 144
+      }
+    ]
+  }
+}
