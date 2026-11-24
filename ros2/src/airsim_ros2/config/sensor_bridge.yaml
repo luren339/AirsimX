@@ -1,0 +1,27 @@
+/**:
+  ros__parameters:
+    lidar_name: Lidar1
+    imu_name: Imu
+    camera_name: front_center
+    lidar_topic: lidar/points
+    imu_topic: imu
+    imu_raw_topic: ''
+    imu_target_hz_sim_time: 0.0
+    image_topic: camera/image_raw
+    camera_info_topic: camera/camera_info
+    clock_topic: /clock
+    # RPC polling uses wall time. Measure unique source-stamp rates separately.
+    lidar_poll_hz: 10.0
+    imu_poll_hz: 200.0
+    camera_poll_hz: 5.0
+    publish_camera: true
+    rpc_timeout_s: 2.0
+    reconnect_delay_s: 1.0
+    diagnostic_period_s: 5.0
+    # Example rig only, body FLU metres and sensor-to-body xyzw quaternions.
+    lidar_translation: [0.0, 0.0, 0.0777]
+    lidar_rotation: [0.0, 0.0, 0.0, 1.0]
+    imu_translation: [0.0, 0.0, 0.0]
+    imu_rotation: [0.0, 0.0, 0.0, 1.0]
+    camera_translation: [0.085, 0.0, 0.010]
+    camera_rotation: [0.5, -0.5, 0.5, -0.5]

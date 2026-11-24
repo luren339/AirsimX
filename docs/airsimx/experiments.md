@@ -14,6 +14,99 @@ ros2 launch airsim_ros2 airsim_bridge.launch.py host:=127.0.0.1 port:=41451 vehi
 
 This example expects a running, locally reachable SimpleFlight simulator. `/<vehicle>/camera_0/image_raw` is raw `bgr8`, capture-stamped, best-effort. Use compatible subscription QoS and check arriving frames, not just discovery. PX4's example RPC port is 41452. Local NED is north/east/down; ENU is east/north/up. World NED→ENU swaps horizontal axes; sensor FRD→FLU does **not**. To compare odometry, pair the two messages by their shared stamp.
 
+## Read-only LiDAR, IMU and camera acquisition
+
+The optional `airsim_sensor_bridge` is migrated from an existing UE5/Jazzy
+acquisition bridge. Each enabled sensor has its own RPC client and polling
+thread. It does not arm, reset, move, or request vehicle-state odometry.
+The original `airsim_bridge` and its command services remain separate.
+
+Start a simulator with the [sensor example](../../tools/airsimx/settings/multisensor-readonly.json)
+passed as its `-settings=<absolute path>` argument. This example uses SimpleFlight,
+generic spinning LiDAR and an ideal perspective camera; it is not a MID-360S
+hardware model or a physical camera calibration. It does not require PX4.
+With the client installed for the same Python interpreter as ROS, build and launch:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+cd ros2
+colcon build --packages-up-to airsim_ros2
+source install/setup.bash
+ros2 launch airsim_ros2 sensor_bridge.launch.py
+```
+
+`host`, `port`, `vehicle_name`, `namespace`, `frame_prefix`, `params_file` and
+`publish_clock` are launch arguments. A YAML parameter file is installed with
+the package. Poll rates are **wall-time RPC rates**, not guaranteed source rates.
+Measure unique header stamps and elapsed simulation time separately, particularly
+when `ClockSpeed` differs from one. All polling rates and timeouts must be finite
+and positive; `publish_camera=false` disables the camera worker.
+Failed connections use a separate, interruptible `reconnect_delay_s` (default one
+second), not the IMU polling period. Shutdown closes active clients, cancels
+outstanding RPC calls and joins their workers before destroying ROS publishers.
+
+| Default topic | Content |
+| --- | --- |
+| `/uav_a/lidar/points` | Sensor-local FLU `PointCloud2`, XYZ plus zero placeholder intensity |
+| `/uav_a/imu` | FLU angular velocity/acceleration; orientation explicitly unavailable |
+| `/uav_a/camera/image_raw` | `rgb8` image, using the acquisition code's existing encoding |
+| `/uav_a/camera/camera_info` | Same source stamp, optical frame and dimensions as the image |
+| `/clock` | Largest accepted source stamp, only if this node is the clock owner |
+| `/tf_static` | Configured body-FLU to sensor-FLU / camera-optical extrinsics |
+
+Publishers use reliable QoS with depth 10, compatible with best-effort or reliable
+subscribers. Frame IDs are prefixed independently of the ROS namespace; set both
+for each vehicle. Exactly one node should publish the global clock. For a second
+vehicle that already exists in the simulator, for example:
+
+```bash
+ros2 launch airsim_ros2 sensor_bridge.launch.py \
+  vehicle_name:=UAV_B namespace:=uav_b frame_prefix:=uav_b publish_clock:=false
+```
+
+The LiDAR must explicitly set `DataFrame: SensorLocalFrame` in its vehicle's
+`Sensors` configuration. The bridge rejects the inertial-frame default rather
+than labelling world points as sensor points. It does not synthesize per-point
+time, realistic intensity, or motion compensation. Translations are body-FLU
+metres and rotations are sensor-to-body `xyzw` quaternions. The installed YAML
+contains an example rig; match those values to your simulator mounts. The Python
+node's defaults use co-located sensors, with the usual optical-axis rotation.
+The native AirSim IMU reports body measurements: its translation must be zero
+and its rotation must be identity. Other IMU mounts are rejected rather than
+assigning a misleading frame to unchanged body measurements.
+
+CameraInfo uses the **Scene projection matrix** from `simGetCameraInfo`, rather
+than its independent main/CineCamera `fov` field. Focal scales therefore follow
+the actual Scene capture even when its FOV differs from the main camera. The
+principal-point approximation remains `((width-1)/2, (height-1)/2)`. Use a centred,
+fixed perspective camera with distortion disabled. Unsupported projection
+layouts are rejected; dynamic zoom and physical-camera calibration accuracy are
+outside this example's validation.
+
+The optional `imu_raw_topic` publishes every accepted IMU source sample.
+`imu_target_hz_sim_time=0` passes them all; a positive value selects existing
+measurements using source-time intervals. This performs no denoising or
+interpolation and cannot recover missing measurements or exceed the source rate.
+Duplicate and backward source stamps are rejected together. After resetting the
+simulator clock, restart **all** acquisition nodes and begin a new recording;
+automatic clock-epoch recovery is not implemented. Static mounts and frame/topic
+parameters also require a restart when changed.
+
+Offline timestamp/selection tests run with the existing CI entry point. Message
+and node tests require a sourced Jazzy environment and inject sensor-only RPC:
+
+```bash
+python3 -m unittest discover -s ros2/src/airsim_ros2/test -p 'test_sensor*.py' -v
+```
+
+The command above is run from the repository root with `PythonClient` and
+`ros2/src/airsim_ros2` importable (or installed), preserving ROS's existing
+`PYTHONPATH`. Tests that need ROS report a skip in the offline Windows/Linux
+suite. They do not constitute a simulator flight or a sensor-rate benchmark.
+
+中文提示：此入口只采集传感器，不发布位姿真值或控制指令。外参取自配置；
+轮询频率与源采样频率分开统计。相机与CameraInfo配对，仿真重置后重启节点并另开记录。
+
 ## Gymnasium and Stable-Baselines3
 
 [Gym environment](../../PythonClient/airsim_gym/envs/quadrotor.py) · [training](../../tools/airsimx/gym/train_sb3.py) · [evaluation](../../tools/airsimx/gym/evaluate_sb3.py)
