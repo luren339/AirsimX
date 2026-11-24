@@ -110,8 +110,8 @@ class AirSimRos2SensorBridge(Node):
         self._static_tf.sendTransform(transforms)
 
         self._stop = threading.Event()
-        self._clients_lock = threading.Lock()
-        self._clients = {}
+        self._rpc_clients_lock = threading.Lock()
+        self._rpc_clients = {}
         self._clock_lock = threading.Lock()
         self._last_clock_ns = 0
         self._gates = {name: SourceSampleFilter() for name in ('lidar', 'imu', 'camera')}
@@ -142,11 +142,11 @@ class AirSimRos2SensorBridge(Node):
 
     def _new_client(self, name):
         client = self._client_factory(ip=self.host, port=self.port, timeout_value=self.rpc_timeout_s)
-        with self._clients_lock:
+        with self._rpc_clients_lock:
             if self._stop.is_set():
                 client.close()
                 raise RuntimeError('sensor bridge is stopping')
-            self._clients[name] = client
+            self._rpc_clients[name] = client
         try:
             if not client.ping():
                 raise ConnectionError('AirSim ping failed')
@@ -167,9 +167,9 @@ class AirSimRos2SensorBridge(Node):
             raise
 
     def _release_client(self, name, client):
-        with self._clients_lock:
-            if self._clients.get(name) is client:
-                del self._clients[name]
+        with self._rpc_clients_lock:
+            if self._rpc_clients.get(name) is client:
+                del self._rpc_clients[name]
         client.close()
 
     def _worker(self, name: str, rate_hz: float, callback) -> None:
@@ -319,8 +319,8 @@ class AirSimRos2SensorBridge(Node):
         if self._destroyed:
             return
         self._stop.set()
-        with self._clients_lock:
-            clients = list(self._clients.values())
+        with self._rpc_clients_lock:
+            clients = list(self._rpc_clients.values())
         for client in clients:
             client.close()  # SDK close cancels outstanding calls, including the handshake.
         for worker in self._workers:

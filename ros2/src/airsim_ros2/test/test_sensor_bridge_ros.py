@@ -273,6 +273,19 @@ class SensorBridgeTests(unittest.TestCase):
         self.assertEqual(second.lidar_pub.topic_name, '/uav_b/lidar/points')
         self.assertIsNone(second.clock_pub)
 
+    def test_connected_rpc_clients_do_not_shadow_ros_executor_clients(self):
+        from rclpy.executors import SingleThreadedExecutor
+        node = self.node()
+        node._client_factory = lambda **kw: SensorClient()
+        node._new_client('imu')
+        executor = SingleThreadedExecutor(context=self.context)
+        executor.add_node(node)
+        try:
+            executor.spin_once(timeout_sec=.01)
+        finally:
+            executor.remove_node(node)
+            executor.shutdown()
+
 
 if __name__ == '__main__':
     unittest.main()
