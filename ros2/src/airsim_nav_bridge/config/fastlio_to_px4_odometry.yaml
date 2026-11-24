@@ -1,0 +1,12 @@
+# Optional local SITL example: FAST-LIO2 world NWU and child/body FLU.
+# This is not compatible with an ENU odometry producer without upstream adaptation.
+/fastlio_to_px4_odometry_bridge:
+  ros__parameters:
+    input_topic: /Odometry
+    output_topic: /fmu/in/vehicle_visual_odometry
+    variance_floor: 0.01
+    max_initial_position_norm_m: 5.0
+    max_position_speed_m_s: 15.0
+    diagnostic_period_s: 5.0
+    clock_topic: /clock
+    px4_time_topic: /fmu/out/sensor_combined

@@ -13,7 +13,7 @@ $py = (Resolve-Path .venv/Scripts/python.exe).Path
 & $py -I tools/airsimx/ci/run_offline.py --output build/airsimx/ci/first
 ```
 
-Read `build/airsimx/ci/first/result.json`: it records suite exit codes, optional skips and the source revision. The three suites cover the client, project tools and ROS coordinate conversions. A pass here is **not** a flight test. Dependencies need a network connection on first installation, or a pre-populated wheelhouse. To import the SDK from outside the checkout, use `& $py -m pip install --no-deps ./PythonClient` in the same environment; installing `airsim` from a public package index does not install this checkout.
+Read `build/airsimx/ci/first/result.json`: it records suite exit codes, optional skips and the source revision. The four suites cover the client, project tools, ROS coordinate conversions and ROS-free PX4 odometry helpers. A pass here is **not** a flight test. Dependencies need a network connection on first installation, or a pre-populated wheelhouse. To import the SDK from outside the checkout, use `& $py -m pip install --no-deps ./PythonClient` in the same environment; installing `airsim` from a public package index does not install this checkout.
 
 ## Build Blocks on Windows
 

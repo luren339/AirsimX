@@ -27,11 +27,14 @@ import time
 ROOT = Path(__file__).resolve().parents[3]
 PYTHON_CLIENT = ROOT / 'PythonClient'
 ROS2_PACKAGE = ROOT / 'ros2' / 'src' / 'airsim_ros2'
+NAV_PACKAGE = ROOT / 'ros2' / 'src' / 'airsim_nav_bridge'
 
 SUITES = (
     ('python-client', PYTHON_CLIENT / 'tests', (PYTHON_CLIENT,)),
     ('airsimx-tools', ROOT / 'tools' / 'airsimx' / 'tests', ()),
     ('ros2-conversions', ROS2_PACKAGE / 'test', (PYTHON_CLIENT, ROS2_PACKAGE)),
+    # test/ros has no __init__.py: its explicit Jazzy/DDS tests are separate.
+    ('px4-odometry-conversions', NAV_PACKAGE / 'test', (NAV_PACKAGE,)),
 )
 
 

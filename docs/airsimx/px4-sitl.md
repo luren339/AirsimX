@@ -38,3 +38,72 @@ For two machines, copy the example first and set the simulator bind interface, p
 Two- and three-vehicle profiles allocate separate instances/ports. The [validation table](validation.md) distinguishes dual lockstep from triple free-running results. Calibrated examples vary GPS accuracy with satellite geometry and model IMU scale, misalignment and nonlinearity. These are simulation profiles, not calibrations for physical hardware.
 
 中文提示：同机示例默认只用回环；跨机器时自己复制并填写私网端点。先启动 UE 等待连接，再启动软件飞控。RPC、仿真 MAVLink 和 DDS 是三条不同的链路，不能用某一条的连接成功代替另外两条的验证。
+
+## Optional FAST-LIO2 external odometry / 可选外部里程计
+
+The `airsim_nav_bridge` package also contains `fastlio_to_px4_odometry`, migrated from an existing FAST-LIO2 SITL bridge. It consumes **estimator output**, `/clock` and PX4 `SensorCombined` timestamps, then publishes `px4_msgs/VehicleOdometry`. It does not read AirSim truth, GNSS, arming state or control setpoints. The PX4 topic name `vehicle_visual_odometry` identifies the external-estimate input; it does not imply that the estimate came from a camera.
+
+This executable is optional. The default MAVLink-only build above, the general `airsim_ros2` package and the existing navigation source/recorder do not require `px4_msgs` or a SLAM workspace. To run this example, supply a separate **PX4 v1.17.0 DDS-enabled SITL**, **`px4_msgs` `release/1.17`** built for **ROS 2 Jazzy**, and **Micro XRCE-DDS Agent v2.4.3**. These external projects and FAST-LIO2 are not vendored or installed by AirsimX. The conditional `package.xml` dependency is enabled by `AIRSIMX_WITH_PX4_ODOMETRY=1`; leave it unset for the default package. Message versions and DDS topic names must match the selected firmware. Keep the agent and SITL on the local host for this example, with no USB/physical flight controller attached.
+
+From the repository root, with `PX4_MSGS_WS` set to your separately prepared workspace:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source "$PX4_MSGS_WS/install/setup.bash"
+export AIRSIMX_WITH_PX4_ODOMETRY=1
+colcon --log-base build/airsimx/odom/log build \
+  --base-paths ros2/src --packages-select airsim_nav_bridge \
+  --build-base build/airsimx/odom/build --install-base build/airsimx/odom/install
+source build/airsimx/odom/install/setup.bash
+```
+
+Only after checking your local SITL and FAST-LIO2 input frames and time domains, run:
+
+```bash
+ros2 run airsim_nav_bridge fastlio_to_px4_odometry --ros-args \
+  --params-file "$(ros2 pkg prefix airsim_nav_bridge)/share/airsim_nav_bridge/config/fastlio_to_px4_odometry.yaml"
+```
+
+The installed [example configuration](../../ros2/src/airsim_nav_bridge/config/fastlio_to_px4_odometry.yaml) exposes input/output topics, clock topics, covariance floor, startup-position and inter-sample speed limits. CLI parameter overrides can select distinct per-vehicle topics. This example does not configure or enable PX4 EKF fusion; inspect actual estimator aid-source status separately before making a fusion claim.
+
+### Frame, covariance and time contract
+
+| Input or output | Contract |
+| --- | --- |
+| Input pose | FAST-LIO2 local world **NWU**, body **FLU**; position is in the local world. This is not an ENU conversion. The generic AirSim ENU odometry output must not be connected directly. Frame names are reported but do not trigger TF lookup or conversion. |
+| Output pose | Local **FRD**, arbitrary fixed heading origin (`POSE_FRAME_FRD`), not true-north-aligned NED. Position becomes `(x, -y, -z)`; normalized input quaternion `(x, y, z, w)` becomes Hamilton `(w, x, -y, -z)`, changing both the local and body bases. |
+| Twist | Input linear/angular velocity must be body **FLU**. Both become `(x, -y, -z)`; velocity uses `VELOCITY_FRAME_BODY_FRD`. No world-to-body velocity rotation is inferred. |
+| Covariance | Pose position, attitude and linear-velocity diagonal entries are copied. Finite values are clamped to the configured positive floor (default `0.01`); non-finite values are replaced by that floor. Cross terms are discarded. The existing zero-covariance FAST-LIO2 use case is preserved; this is not general world/body covariance rotation or a calibrated uncertainty model. |
+| Quality and reset | Both remain `0`: quality is unreported, and estimator reset detection/counter propagation is not implemented. |
+| Inputs and QoS | `/Odometry` (`nav_msgs/Odometry`), `/clock` and `/fmu/out/sensor_combined` use sensor-data best-effort subscriptions; the output `/fmu/in/vehicle_visual_odometry` publisher is reliable, depth 10. |
+
+The odometry header and `/clock` must share the simulation time domain. The configured PX4 clock source must carry PX4-local HRT microseconds, not an already ROS-synchronized epoch; check firmware time-synchronization settings before use. The bridge waits for positive values from both clocks and maps each sample by:
+
+```text
+timestamp_sample = floor(odom_stamp_ns / 1000)
+                   + sensor_combined.timestamp - floor(clock_ns / 1000)
+timestamp        = max(sensor_combined.timestamp, timestamp_sample)
+```
+
+Only positive, strictly advancing output timestamps are published. The input sample timestamp must also advance relative to the last **accepted** sample; a rejected sample can be retried once the clocks advance. Non-finite positions, startup positions beyond 5 m from the local origin, inter-sample position speeds above 15 m/s and zero/non-finite quaternions are rejected under the default configuration. These are existing sample checks, not a general estimator-health guarantee.
+
+This latest-clock mapping has no clock-pair synchronization, freshness timeout or delay estimation. It does not implement automatic recovery from simulation/PX4 restarts, time rollback, attitude resets or map-optimization jumps; restart the bridge with a fresh estimator run after checking the frames and clocks. A large position jump can be rejected, but an attitude reset or a jump within configured limits is not automatically identified. No physical-hardware or continuous-flight acceptance is claimed.
+
+### Validation commands and limits
+
+The existing offline CI runner now includes `px4-odometry-conversions`, which needs neither ROS nor `px4_msgs`. From the repository root, run it with the same Python environment used for the SDK offline checks:
+
+```bash
+python tools/airsimx/ci/run_offline.py --output build/airsimx/ci/offline
+```
+
+The explicit ROS suite is separate, under `test/ros` (not recursed by offline `unittest` discovery). With Jazzy and matching `px4_msgs` sourced, use a dedicated ROS domain that is unused by your experiments:
+
+```bash
+export ROS_DOMAIN_ID=187
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+export PYTHONPATH="$PWD/PythonClient:$PWD/ros2/src/airsim_nav_bridge:$PYTHONPATH"
+python -m unittest discover -s ros2/src/airsim_nav_bridge/test/ros -v
+```
+
+The migrated code has been checked with 15 ROS-free helper tests and 12 Jazzy/`px4_msgs` tests covering typed-message serialization, synthetic pub/sub, dropped samples and clean node exit. This validation used synthetic estimator input in an isolated ROS domain; it did not start UE, an agent or PX4, and does not demonstrate FAST-LIO2 accuracy, PX4 EKF fusion, hardware compatibility or a flight result. The Ubuntu/Windows offline matrix and Windows native gate still need to run on the eventual PR.
