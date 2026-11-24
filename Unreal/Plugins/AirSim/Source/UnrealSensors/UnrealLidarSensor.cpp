@@ -141,19 +141,6 @@ bool UnrealLidarSensor::shootLaser(const msr::airlib::Pose& lidar_pose, const ms
             }
         }
 
-        if (false && UAirBlueprintLib::IsInGameThread()) {
-            // Debug code for very specific cases.
-            // Mostly shouldn't be needed. Use SimModeBase::drawLidarDebugPoints()
-            DrawDebugPoint(
-                actor_->GetWorld(),
-                hit_result.ImpactPoint,
-                5, //size
-                FColor::Red,
-                true, //persistent (never goes away)
-                0.1 //point leaves a trail on moving object
-            );
-        }
-
         // decide the frame for the point-cloud
         if (params.data_frame == AirSimSettings::kVehicleInertialFrame) {
             // current detault behavior; though it is probably not very useful.
