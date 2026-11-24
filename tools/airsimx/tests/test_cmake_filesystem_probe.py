@@ -85,6 +85,13 @@ class CMakeFilesystemProbeTests(unittest.TestCase):
             selected = self._configure_and_build(Path(temporary) / "build", [])
             self.assertIn(selected, ("", "c++fs"))
 
+    def test_try_compile_uses_cxx17_when_compiler_default_is_cxx14(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="airsim-fs-cxx17-") as temporary:
+            self._configure_and_build(
+                Path(temporary) / "build",
+                ["-DAIRSIM_TEST_DEFAULT_CXX14=ON"],
+            )
+
     def test_uses_cxxfs_fallback_when_direct_link_is_unavailable(self) -> None:
         archiver = shutil.which("ar")
         if not archiver:

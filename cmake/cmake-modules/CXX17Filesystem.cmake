@@ -7,6 +7,10 @@ function(airsim_detect_cxx17_filesystem_extra_library output_variable)
 #include <filesystem>
 #include <system_error>
 
+#if __cplusplus < 201703L
+#error "filesystem link probe must compile as C++17"
+#endif
+
 int main()
 {
     std::error_code error;
@@ -19,6 +23,8 @@ int main()
 }
 ]=])
 
+    set(_airsim_saved_required_flags "${CMAKE_REQUIRED_FLAGS}")
+    set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -std=c++17")
     set(_airsim_saved_required_libraries "${CMAKE_REQUIRED_LIBRARIES}")
     if(CMAKE_CXX_STANDARD_LIBRARIES)
         separate_arguments(
@@ -32,6 +38,7 @@ int main()
         AIRSIM_CXX17_FILESYSTEM_LINKS_WITHOUT_EXTRA_LIB)
 
     if(AIRSIM_CXX17_FILESYSTEM_LINKS_WITHOUT_EXTRA_LIB)
+        set(CMAKE_REQUIRED_FLAGS "${_airsim_saved_required_flags}")
         set(CMAKE_REQUIRED_LIBRARIES "${_airsim_saved_required_libraries}")
         set(${output_variable} "" PARENT_SCOPE)
         return()
@@ -42,6 +49,7 @@ int main()
     check_cxx_source_compiles(
         "${_airsim_filesystem_probe}"
         AIRSIM_CXX17_FILESYSTEM_LINKS_WITH_CXXFS)
+    set(CMAKE_REQUIRED_FLAGS "${_airsim_saved_required_flags}")
     set(CMAKE_REQUIRED_LIBRARIES "${_airsim_saved_required_libraries}")
 
     if(NOT AIRSIM_CXX17_FILESYSTEM_LINKS_WITH_CXXFS)
