@@ -8,6 +8,7 @@ import math
 import struct
 
 from .conversions import frd_to_flu_vector, stamp_from_nanoseconds
+from .sensor_samples import SensorConfigurationError, validate_ros_timestamp_ns
 
 
 def pinhole_intrinsics(width, height, fov_deg):
@@ -23,9 +24,7 @@ This is not a physical-camera calibration or support for lens distortion.
 
 def stamp_from_ns(timestamp_ns):
     from builtin_interfaces.msg import Time
-    sec, nanosec = stamp_from_nanoseconds(int(timestamp_ns))
-    if sec > 2_147_483_647:
-        raise ValueError('sensor stamp exceeds ROS Time.sec int32 range')
+    sec, nanosec = stamp_from_nanoseconds(validate_ros_timestamp_ns(timestamp_ns))
     return Time(sec=sec, nanosec=nanosec)
 
 
@@ -75,6 +74,10 @@ vertical scale at [1,2], and perspective divisor at [3,0].
 """
     if width <= 0 or height <= 0 or len(projection) != 4 or any(len(row) != 4 for row in projection):
         raise ValueError('positive image dimensions and a 4x4 Scene projection required')
+    if width < height:
+        raise SensorConfigurationError(
+            'portrait SceneCapture is unsupported: the RPC projection differs from the renderer; '
+            'use image width >= height until the projection conventions are aligned')
     matrix = [[float(v) for v in row] for row in projection]
     if not all(math.isfinite(v) for row in matrix for v in row):
         raise ValueError('Scene projection must be finite')

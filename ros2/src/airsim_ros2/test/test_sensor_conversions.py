@@ -73,6 +73,23 @@ class SensorMessageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             convert.camera_info_from_projection(640, 480, np_identity(), 100, 'a/camera_optical_frame')
 
+    def test_portrait_rpc_projection_is_rejected_when_renderer_uses_240px(self):
+        # UE SceneCaptureRendering::BuildProjectionMatrix keeps XAxisMultiplier=1.
+        # For 480x640 at horizontal FOV90 the rendered focal is 240 px. The RPC
+        # changes to Y/X=4/3, producing 320 px; do not reuse that to define truth.
+        legacy_rpc = [[0., 4 / 3, 0., 0.], [0., 0., -1., 0.],
+                      [0., 0., 0., 10.], [-1., 0., 0., 0.]]
+        with self.assertRaisesRegex(ValueError, 'portrait'):
+            convert.camera_info_from_projection(480, 640, legacy_rpc, 100, 'a/camera')
+
+    def test_landscape_and_square_match_literal_scene_renderer_focal(self):
+        for width, height, vertical in ((640, 480, -4 / 3), (640, 640, -1.)):
+            with self.subTest(size=(width, height)):
+                projection = [[0., 1., 0., 0.], [0., 0., vertical, 0.],
+                              [0., 0., 0., 10.], [-1., 0., 0., 0.]]
+                msg = convert.camera_info_from_projection(width, height, projection, 100, 'a/camera')
+                self.assertEqual((msg.k[0], msg.k[4]), (320., 320.))
+
 
 def np_identity():
     return [[float(i == j) for j in range(4)] for i in range(4)]

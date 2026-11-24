@@ -7,20 +7,41 @@ Selection never interpolates or publishes a source measurement more than once.
 import math
 
 
+class SensorConfigurationError(ValueError):
+    """Permanent data-contract failure: reconnecting cannot repair this configuration."""
+
+
+def validate_ros_timestamp_ns(timestamp_ns):
+    value = int(timestamp_ns)
+    if value < 0:
+        raise ValueError('sensor timestamp must be nonnegative')
+    if value >= (2**31) * 1_000_000_000:
+        raise SensorConfigurationError(
+            'unsupported source epoch: timestamp exceeds ROS Time.sec int32 range; '
+            'use a representable simulator clock epoch (no rebasing or wrapping is performed)')
+    return value
+
+
 class SourceSampleFilter:
     def __init__(self):
         self.last_timestamp = 0
         self.accepted = 0
         self.rejected = 0
 
-    def accept(self, timestamp_ns):
-        value = int(timestamp_ns)
-        if value <= 0 or value >= (2**31) * 1_000_000_000:
-            raise ValueError('sensor timestamp must be positive and fit ROS Time.sec')
+    def can_accept(self, timestamp_ns):
+        """Check/reject duplicates without consuming a candidate source timestamp."""
+        value = validate_ros_timestamp_ns(timestamp_ns)
+        if value == 0:
+            raise ValueError('sensor timestamp must be positive')
         if value <= self.last_timestamp:
             self.rejected += 1
             return False
-        self.last_timestamp = value
+        return True
+
+    def accept(self, timestamp_ns):
+        if not self.can_accept(timestamp_ns):
+            return False
+        self.last_timestamp = int(timestamp_ns)
         self.accepted += 1
         return True
 

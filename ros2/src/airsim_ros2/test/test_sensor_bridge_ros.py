@@ -32,6 +32,7 @@ class SensorClient:
     def __init__(self, frame='SensorLocalFrame'):
         self.calls, self.closed, self.frame = [], False, frame
         self.stamp = 1_000_000_000
+        self.connection_generation = 1
 
     def confirmConnection(self):
         self.calls.append('confirmConnection')
@@ -123,7 +124,7 @@ class SensorBridgeTests(unittest.TestCase):
         self.assertEqual((info.width, info.height), (image.width, image.height))
         self.assertEqual(image.header.stamp.sec, 1)
         self.assertAlmostEqual(info.k[0], 4 * math.sqrt(3.))
-        self.assertEqual(set(client.calls), {'getLidarData', 'simGetImages', 'simGetCameraInfo'})
+        self.assertEqual(set(client.calls), {'getSettingsString', 'getLidarData', 'simGetImages', 'simGetCameraInfo'})
 
     def test_clock_does_not_regress_and_a_nonmaster_never_publishes_clock(self):
         node, client = self.node(), SensorClient()

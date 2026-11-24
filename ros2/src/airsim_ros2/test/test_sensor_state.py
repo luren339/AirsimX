@@ -6,6 +6,17 @@ from airsim_ros2.sensor_conversions import pinhole_intrinsics
 
 
 class SourceSampleTests(unittest.TestCase):
+    def test_checking_a_candidate_does_not_commit_its_source_stamp(self):
+        gate = SourceSampleFilter()
+        check = getattr(gate, 'can_accept', None)
+        self.assertTrue(callable(check), 'camera preparation needs a noncommitting duplicate check')
+        self.assertTrue(check(100))
+        self.assertTrue(check(100))
+        self.assertEqual((gate.last_timestamp, gate.accepted), (0, 0))
+        self.assertTrue(gate.accept(100))
+        self.assertFalse(check(100))
+        self.assertEqual((gate.last_timestamp, gate.accepted, gate.rejected), (100, 1, 1))
+
     def test_only_new_positive_source_timestamps_are_accepted(self):
         gate = SourceSampleFilter()
         self.assertTrue(gate.accept(100))

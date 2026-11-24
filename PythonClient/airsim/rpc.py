@@ -116,10 +116,17 @@ class Client:
         self._pending = {}
         self._next_id = 0
         self._socket = None
+        self._connection_generation = 0
         self._connecting_socket = None
         self._resolution = None
         self._reader = None
         self._closed = False
+
+    @property
+    def connection_generation(self):
+        """Local physical-connection identity; increases on every successful connect."""
+        with self._lock:
+            return self._connection_generation
 
     def call(self, method, *args):
         return self.call_async(method, *args).get()
@@ -258,6 +265,7 @@ class Client:
                     if self._closed:
                         raise RPCTransportError('RPC client is closed')
                     self._socket = connection
+                    self._connection_generation += 1
                     self._connecting_socket = None
                     connected = True
                     self._reader = threading.Thread(target=Client._receive, args=(weakref.ref(self), connection),

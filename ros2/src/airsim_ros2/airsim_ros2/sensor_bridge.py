@@ -18,6 +18,7 @@ import numpy as np
 import rclpy
 from rosgraph_msgs.msg import Clock
 from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
 
@@ -30,7 +31,7 @@ from .sensor_conversions import (
 )
 
 
-from .sensor_samples import ImuSampleSelector, SourceSampleFilter
+from .sensor_samples import ImuSampleSelector, SensorConfigurationError, SourceSampleFilter
 from tf2_ros import StaticTransformBroadcaster
 
 
@@ -112,6 +113,9 @@ class AirSimRos2SensorBridge(Node):
         self._stop = threading.Event()
         self._rpc_clients_lock = threading.Lock()
         self._rpc_clients = {}
+        self._lidar_validation = (None, None)
+        self._failure_lock = threading.Lock()
+        self.failure_reason = None
         self._clock_lock = threading.Lock()
         self._last_clock_ns = 0
         self._gates = {name: SourceSampleFilter() for name in ('lidar', 'imu', 'camera')}
@@ -157,10 +161,7 @@ class AirSimRos2SensorBridge(Node):
             if self._stop.is_set():
                 raise RuntimeError('sensor bridge is stopping')
             if name == 'lidar':
-                settings = json.loads(client.getSettingsString())
-                sensor = settings.get('Vehicles', {}).get(self.vehicle, {}).get('Sensors', {}).get(self.lidar_name, {})
-                if sensor.get('DataFrame') != 'SensorLocalFrame':
-                    raise ValueError('readonly bridge requires LiDAR DataFrame=SensorLocalFrame in vehicle Sensors')
+                self._validate_lidar_connection(client)
             return client
         except Exception:
             self._release_client(name, client)
@@ -170,7 +171,30 @@ class AirSimRos2SensorBridge(Node):
         with self._rpc_clients_lock:
             if self._rpc_clients.get(name) is client:
                 del self._rpc_clients[name]
+        if self._lidar_validation[0] is client:
+            self._lidar_validation = (None, None)
         client.close()
+
+    def _validate_lidar_connection(self, client):
+        generation = client.connection_generation
+        settings = json.loads(client.getSettingsString())
+        if client.connection_generation != generation:
+            raise ConnectionError('LiDAR connection changed during settings validation; discard sample')
+        sensor = settings.get('Vehicles', {}).get(self.vehicle, {}).get('Sensors', {}).get(self.lidar_name, {})
+        if sensor.get('DataFrame') != 'SensorLocalFrame':
+            raise ValueError('readonly bridge requires LiDAR DataFrame=SensorLocalFrame in vehicle Sensors')
+        self._lidar_validation = (client, generation)
+
+    def _lidar_connection_validated(self, client):
+        return (self._lidar_validation[0] is client
+                and self._lidar_validation[1] == client.connection_generation)
+
+    def _fail_configuration(self, error):
+        with self._failure_lock:
+            if self.failure_reason is None:
+                self.failure_reason = str(error)
+                self._stop.set()
+                self.get_logger().error('Sensor configuration rejected; stopping: ' + str(error))
 
     def _worker(self, name: str, rate_hz: float, callback) -> None:
         period = 1.0 / rate_hz
@@ -185,6 +209,9 @@ class AirSimRos2SensorBridge(Node):
                     if self._stop.is_set():
                         break
                     callback(client)
+                except SensorConfigurationError as exc:
+                    self._fail_configuration(exc)
+                    break
                 except Exception as exc:
                     if client is not None:
                         self._release_client(name, client)
@@ -218,6 +245,16 @@ class AirSimRos2SensorBridge(Node):
         if self.publish_clock_enabled:
             self._publish_clock(int(timestamp_ns))
         self._report_rate_if_due(name)
+        return True
+
+    def _check_timestamp(self, name: str, timestamp_ns: int) -> bool:
+        if self._stop.is_set():
+            return False
+        gate = self._gates[name]
+        if not gate.can_accept(timestamp_ns):
+            self._stats[name]['duplicates'] = gate.rejected
+            self._report_rate_if_due(name)
+            return False
         return True
 
     def _publish_clock(self, timestamp_ns: int) -> None:
@@ -258,7 +295,12 @@ class AirSimRos2SensorBridge(Node):
             stat['reported_count'] = stat['count']
 
     def _lidar_loop(self, client: airsim.MultirotorClient) -> None:
+        if not self._lidar_connection_validated(client):
+            self._validate_lidar_connection(client)
         data = client.getLidarData(lidar_name=self.lidar_name, vehicle_name=self.vehicle)
+        # A successful SDK call can reconnect internally after an idle EOF.
+        if not self._lidar_connection_validated(client):
+            self._validate_lidar_connection(client)
         if not self._accept_timestamp('lidar', data.time_stamp):
             return
         msg = pointcloud2_from_xyz(data.point_cloud, data.time_stamp, f'{self.prefix}/lidar_link')
@@ -289,7 +331,7 @@ class AirSimRos2SensorBridge(Node):
         if not responses:
             return
         response = responses[0]
-        if not response.image_data_uint8 or not self._accept_timestamp('camera', response.time_stamp):
+        if not response.image_data_uint8 or not self._check_timestamp('camera', response.time_stamp):
             return
         encoded = np.frombuffer(response.image_data_uint8, dtype=np.uint8)
         bgr = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
@@ -312,6 +354,8 @@ class AirSimRos2SensorBridge(Node):
             image.width, image.height, camera.proj_mat.matrix,
             response.time_stamp, frame,
         )
+        if not self._accept_timestamp('camera', response.time_stamp):
+            return
         self.image_pub.publish(image)
         self.camera_info_pub.publish(info)
 
@@ -331,17 +375,21 @@ class AirSimRos2SensorBridge(Node):
         return super().destroy_node()
 
 
-def main(args=None) -> None:
+def main(args=None) -> int:
     rclpy.init(args=args)
-    node = AirSimRos2SensorBridge()
+    node = None
     try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
+        node = AirSimRos2SensorBridge()
+        while rclpy.ok(context=node.context) and node.failure_reason is None:
+            rclpy.spin_once(node, timeout_sec=.1)
+        return 1 if node.failure_reason is not None else 0
+    except (KeyboardInterrupt, ExternalShutdownException):
+        return 0
     finally:
-        node.destroy_node()
+        if node is not None:
+            node.destroy_node()
         rclpy.try_shutdown()
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

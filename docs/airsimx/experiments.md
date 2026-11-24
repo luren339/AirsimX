@@ -66,7 +66,13 @@ ros2 launch airsim_ros2 sensor_bridge.launch.py \
 
 The LiDAR must explicitly set `DataFrame: SensorLocalFrame` in its vehicle's
 `Sensors` configuration. The bridge rejects the inertial-frame default rather
-than labelling world points as sensor points. It does not synthesize per-point
+than labelling world points as sensor points. Validation is tied to the SDK's
+read-only `connection_generation`, which increases whenever a physical RPC
+socket connects. The bridge checks that identity before and after each data RPC
+and revalidates settings after a transparent idle reconnect. Settings acquired
+across another connection change are discarded rather than used for the sample.
+The generation is local connection state, not a server/vehicle identity.
+The bridge does not synthesize per-point
 time, realistic intensity, or motion compensation. Translations are body-FLU
 metres and rotations are sensor-to-body `xyzw` quaternions. The installed YAML
 contains an example rig; match those values to your simulator mounts. The Python
@@ -76,12 +82,21 @@ and its rotation must be identity. Other IMU mounts are rejected rather than
 assigning a misleading frame to unchanged body measurements.
 
 CameraInfo uses the **Scene projection matrix** from `simGetCameraInfo`, rather
-than its independent main/CineCamera `fov` field. Focal scales therefore follow
-the actual Scene capture even when its FOV differs from the main camera. The
+than its independent main/CineCamera `fov` field. Supported landscape and square
+images follow the Scene capture even when its FOV differs from the main camera. The
 principal-point approximation remains `((width-1)/2, (height-1)/2)`. Use a centred,
 fixed perspective camera with distortion disabled. Unsupported projection
 layouts are rejected; dynamic zoom and physical-camera calibration accuracy are
 outside this example's validation.
+
+Portrait sizes (`width < height`) are explicitly unsupported and stop this
+acquisition node with a configuration diagnostic. The current RPC and UE Scene
+renderer use different axis multipliers for these sizes: at 480x640 and horizontal
+FOV90 the renderer uses 240 px focal length while the RPC implies 320 px. The
+bridge does not publish that incorrect CameraInfo or silently change calibration.
+Camera source timestamps are committed only after both the decoded image and
+CameraInfo are ready. A decoding/calibration RPC failure leaves the same timestamp
+retryable and does not advance this camera stream's contribution to `/clock`.
 
 The optional `imu_raw_topic` publishes every accepted IMU source sample.
 `imu_target_hz_sim_time=0` passes them all; a positive value selects existing
@@ -92,8 +107,18 @@ simulator clock, restart **all** acquisition nodes and begin a new recording;
 automatic clock-epoch recovery is not implemented. Static mounts and frame/topic
 parameters also require a restart when changed.
 
+Sensor headers and `/clock` retain the original source epoch only while it is
+representable by ROS Time's signed-int32 seconds. An out-of-range epoch causes
+one terminal configuration diagnostic, stops all this node's workers and exits
+the CLI with status 1; reconnecting cannot repair it. In particular, multirotor
+ScalableClock scales the whole Unix epoch, so ClockSpeed=2 at current dates is
+not supported by this bridge. Timestamps are not truncated, wrapped or independently
+rebased. Transient transport failures still use the normal reconnect/backoff path.
+
 Offline timestamp/selection tests run with the existing CI entry point. Message
-and node tests require a sourced Jazzy environment and inject sensor-only RPC:
+and node tests require a sourced Jazzy environment. The review regressions use
+the actual SDK and local sensor-only TCP servers, including idle server replacement,
+a dropped calibration response, and an accelerated-epoch node subprocess:
 
 ```bash
 python3 -m unittest discover -s ros2/src/airsim_ros2/test -p 'test_sensor*.py' -v
