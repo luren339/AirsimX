@@ -85,10 +85,6 @@ void UnrealLidarSensor::getPointCloud(const msr::airlib::Pose& lidar_pose, const
     }
 
     if (use_scan_pattern_) {
-        const float horizontal_span = std::abs(params.horizontal_FOV_end - params.horizontal_FOV_start);
-        const bool full_horizontal_fov = horizontal_span >= 359.0f;
-        const float horizontal_start = std::fmod(360.0f + params.horizontal_FOV_start, 360.0f);
-        const float horizontal_end = std::fmod(360.0f + params.horizontal_FOV_end, 360.0f);
         const float min_elevation = std::min(params.vertical_FOV_upper, params.vertical_FOV_lower);
         const float max_elevation = std::max(params.vertical_FOV_upper, params.vertical_FOV_lower);
 
@@ -103,8 +99,7 @@ void UnrealLidarSensor::getPointCloud(const msr::airlib::Pose& lidar_pose, const
             const float horizontal_angle = std::fmod(360.0f - sample.azimuth_deg, 360.0f);
             const float vertical_angle = sample.elevation_deg;
 
-            if (!full_horizontal_fov &&
-                !VectorMath::isAngleBetweenAngles(horizontal_angle, horizontal_start, horizontal_end))
+            if (!LivoxScanPattern::isInHorizontalFov(horizontal_angle, params.horizontal_FOV_start, params.horizontal_FOV_end))
                 continue;
             if (vertical_angle < min_elevation || vertical_angle > max_elevation)
                 continue;
@@ -171,7 +166,7 @@ void UnrealLidarSensor::getPointCloud(const msr::airlib::Pose& lidar_pose, const
 // simulate shooting a laser via Unreal ray-tracing.
 bool UnrealLidarSensor::shootLaser(const msr::airlib::Pose& lidar_pose, const msr::airlib::Pose& vehicle_pose,
                                    const uint32 laser, const float horizontal_angle, const float vertical_angle,
-                                   const msr::airlib::LidarSimpleParams params, Vector3r& point, int& segmentationID)
+                                   const msr::airlib::LidarSimpleParams& params, Vector3r& point, int& segmentationID)
 {
     // start position
     Vector3r start = VectorMath::add(lidar_pose, vehicle_pose).position;

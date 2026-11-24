@@ -24,7 +24,17 @@ public:
         expectThrow<std::invalid_argument>([] { LivoxScanPattern::uniformSampleIndex(0, 0, 1); });
         expectThrow<std::invalid_argument>([] { LivoxScanPattern::uniformSampleIndex(0, 1, 0); });
         expectThrow<std::out_of_range>([] { LivoxScanPattern::uniformSampleIndex(2, 2, 3); });
-        expectThrow<std::overflow_error>([] { LivoxScanPattern::uniformSampleIndex(3, 4, std::numeric_limits<std::size_t>::max()); });
+        if (std::numeric_limits<std::size_t>::digits > 32)
+            expectThrow<std::overflow_error>([] { LivoxScanPattern::uniformSampleIndex(3, 4, std::numeric_limits<std::size_t>::max()); });
+        else
+            testAssert(LivoxScanPattern::uniformSampleIndex(3, 4, std::numeric_limits<std::size_t>::max()) == std::numeric_limits<std::size_t>::max() - 1, "32-bit table indices fit the uint64 product");
+        testAssert(!LivoxScanPattern::isInHorizontalFov(180, 359, 0), "A narrow cross-zero FOV must not become a full circle");
+        testAssert(LivoxScanPattern::isInHorizontalFov(359.5f, 359, 0), "Cross-zero window includes 359.5 degrees");
+        testAssert(LivoxScanPattern::isInHorizontalFov(0, 359, 0), "Cross-zero endpoint");
+        testAssert(!LivoxScanPattern::isInHorizontalFov(359.75f, 0, 359.5f), "Nearly full FOV still has an excluded sector");
+        testAssert(!LivoxScanPattern::isInHorizontalFov(359.5f, 0, 359), "Default FOV retains the excluded final degree");
+        testAssert(LivoxScanPattern::isInHorizontalFov(180, 0, 360), "A full turn includes the opposite direction");
+        testAssert(LivoxScanPattern::isInHorizontalFov(350, -10, 10), "Negative FOV bounds wrap");
         testAssert(LivoxScanPattern::sampleCountForFullFov(200000, 10) == 20000, "10 Hz sample budget");
         testAssert(LivoxScanPattern::sampleCountForFullFov(200000, 20) == 10000, "20 Hz sample budget");
         testAssert(LivoxScanPattern::sampleCountForFullFov(1, 10) == 1, "Positive request has at least one ray");

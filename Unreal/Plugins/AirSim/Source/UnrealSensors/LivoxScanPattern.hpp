@@ -41,6 +41,18 @@ public:
         throw std::invalid_argument("unsupported Livox ScanPatternMode: " + mode);
     }
 
+    // The same directed interval convention used by AirSim VectorMath.
+    static bool isInHorizontalFov(float angle, float start, float end)
+    {
+        angle = std::fmod(angle, 360.0f);
+        start = std::fmod(start, 360.0f);
+        end = std::fmod(end, 360.0f);
+        if (angle < 0) angle += 360.0f;
+        if (start < 0) start += 360.0f;
+        if (end < 0) end += 360.0f;
+        return start < end ? start <= angle && angle <= end : start <= angle || angle <= end;
+    }
+
     // Evenly span a complete ordered pattern in one frame. Using both endpoints
     // avoids repeatedly sampling a narrow, sequential slice of the direction table.
     static std::size_t uniformSampleIndex(std::size_t slot, std::size_t sample_count,

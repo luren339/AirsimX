@@ -15,6 +15,9 @@ With no CSV, channel count, rotation frequency and the original ray generation
 remain in effect. A CSV replaces that ray-direction generation; channel count
 and rotation frequency do not describe the loaded pattern. Range, configured
 horizontal/vertical FOV, collision ray tracing and output frames still apply.
+Horizontal FOV is a directed interval: `359` to `0` is a narrow cross-zero
+window, while `0` to `360` spans a full circle. The original `0` to `359`
+default continues to exclude the final degree.
 
 ## CSV format and sampling
 
