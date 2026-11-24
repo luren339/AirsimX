@@ -35,9 +35,9 @@ int main()
 
     check_cxx_source_compiles(
         "${_airsim_filesystem_probe}"
-        AIRSIM_CXX17_FILESYSTEM_LINKS_WITHOUT_EXTRA_LIB)
+        AIRSIM_CXX17_FILESYSTEM_DIRECTORY_ITERATOR_LINKS_WITHOUT_EXTRA_LIB)
 
-    if(AIRSIM_CXX17_FILESYSTEM_LINKS_WITHOUT_EXTRA_LIB)
+    if(AIRSIM_CXX17_FILESYSTEM_DIRECTORY_ITERATOR_LINKS_WITHOUT_EXTRA_LIB)
         set(CMAKE_REQUIRED_FLAGS "${_airsim_saved_required_flags}")
         set(CMAKE_REQUIRED_LIBRARIES "${_airsim_saved_required_libraries}")
         set(${output_variable} "" PARENT_SCOPE)
@@ -48,11 +48,11 @@ int main()
         c++fs ${CMAKE_REQUIRED_LIBRARIES})
     check_cxx_source_compiles(
         "${_airsim_filesystem_probe}"
-        AIRSIM_CXX17_FILESYSTEM_LINKS_WITH_CXXFS)
+        AIRSIM_CXX17_FILESYSTEM_DIRECTORY_ITERATOR_LINKS_WITH_CXXFS)
     set(CMAKE_REQUIRED_FLAGS "${_airsim_saved_required_flags}")
     set(CMAKE_REQUIRED_LIBRARIES "${_airsim_saved_required_libraries}")
 
-    if(NOT AIRSIM_CXX17_FILESYSTEM_LINKS_WITH_CXXFS)
+    if(NOT AIRSIM_CXX17_FILESYSTEM_DIRECTORY_ITERATOR_LINKS_WITH_CXXFS)
         message(FATAL_ERROR
             "C++17 std::filesystem::directory_iterator cannot be linked "
             "with libc++ alone or with the separate c++fs library")

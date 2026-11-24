@@ -63,7 +63,7 @@ class CMakeFilesystemProbeTests(unittest.TestCase):
         selected = (build_dir / "filesystem-extra-library.txt").read_text()
         cache = (build_dir / "CMakeCache.txt").read_text()
         probe = re.search(
-            r"^AIRSIM_CXX17_FILESYSTEM_LINKS_WITHOUT_EXTRA_LIB:INTERNAL=(.*)$",
+            r"^AIRSIM_CXX17_FILESYSTEM_DIRECTORY_ITERATOR_LINKS_WITHOUT_EXTRA_LIB:INTERNAL=(.*)$",
             cache,
             re.MULTILINE,
         )
@@ -90,6 +90,16 @@ class CMakeFilesystemProbeTests(unittest.TestCase):
             self._configure_and_build(
                 Path(temporary) / "build",
                 ["-DAIRSIM_TEST_DEFAULT_CXX14=ON"],
+            )
+
+    def test_rechecks_after_stale_results_from_the_previous_probe(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="airsim-fs-stale-cache-") as temporary:
+            self._configure_and_build(
+                Path(temporary) / "build",
+                [
+                    "-DAIRSIM_CXX17_FILESYSTEM_LINKS_WITHOUT_EXTRA_LIB:INTERNAL=FALSE",
+                    "-DAIRSIM_CXX17_FILESYSTEM_LINKS_WITH_CXXFS:INTERNAL=FALSE",
+                ],
             )
 
     def test_uses_cxxfs_fallback_when_direct_link_is_unavailable(self) -> None:
@@ -123,7 +133,7 @@ class CMakeFilesystemProbeTests(unittest.TestCase):
                     # Seed the CMake check cache to exercise the legacy
                     # decision branch; the following c++fs probe and final
                     # C++17 executable are still compiled and linked here.
-                    "-DAIRSIM_CXX17_FILESYSTEM_LINKS_WITHOUT_EXTRA_LIB:INTERNAL=FALSE",
+                    "-DAIRSIM_CXX17_FILESYSTEM_DIRECTORY_ITERATOR_LINKS_WITHOUT_EXTRA_LIB:INTERNAL=FALSE",
                     f"-DCMAKE_EXE_LINKER_FLAGS={linker_flags}",
                 ],
             )
