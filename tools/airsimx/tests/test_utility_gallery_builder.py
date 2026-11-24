@@ -1,0 +1,182 @@
+"""Exercise preview inputs, protected-map hashes and offline CLI plans."""
+
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from types import SimpleNamespace
+from unittest import mock
+
+from _generated_geometry_test_utils import TOOLS
+
+
+class PreviewWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.project = self.root / 'Project With Spaces'
+        self.map_file = self.project / 'Content/Existing/Original.umap'
+        self.map_file.parent.mkdir(parents=True)
+        self.map_file.write_bytes(b'existing level must not change')
+        self.glb = self.root / 'generated.glb'
+        self.glb.write_bytes(b'glTF synthetic input for plan-only tests')
+        self.geometry = self.root / 'geometry.json'
+        self.geometry_data = {
+            'status': 'utility_gallery_geometry_generated',
+            'glb_sha256': hashlib.sha256(self.glb.read_bytes()).hexdigest(),
+            'layout_summary': {'cycle_rank': 4}, 'clearance': {'violations': []},
+            'lights': [], 'player_start_m': [-28, -22, 1.25],
+        }
+        self.geometry.write_text(json.dumps(self.geometry_data))
+        self.report = self.root / 'report.json'
+
+    def builder(self, *extra):
+        return subprocess.run(
+            [sys.executable, str(TOOLS / 'scenes/build_utility_gallery_preview.py'),
+             '--project-dir', str(self.project), '--glb', str(self.glb),
+             '--metadata', str(self.geometry), '--report', str(self.report), '--dry-run', *extra],
+            cwd=self.root, capture_output=True, text=True)
+
+    def test_builder_plan_hashes_existing_maps_and_uses_custom_game_paths(self):
+        before = self.map_file.read_bytes()
+        result = self.builder('--map-asset', '/Game/Independent/Maps/Gallery',
+                              '--asset-root', '/Game/Independent/Generated')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads(self.report.read_text())
+        self.assertEqual(report['status'], 'utility_gallery_preview_planned')
+        self.assertEqual(report['map_asset'], '/Game/Independent/Maps/Gallery')
+        self.assertEqual(report['asset_root'], '/Game/Independent/Generated')
+        self.assertEqual(report['map_file'], str(self.project / 'Content/Independent/Maps/Gallery.umap'))
+        self.assertEqual(report['existing_map_sha256_before'],
+                         {'Content/Existing/Original.umap': hashlib.sha256(before).hexdigest()})
+        self.assertEqual(self.map_file.read_bytes(), before)
+        self.assertFalse(Path(report['map_file']).exists())
+        self.assertFalse(report['engine_executed'])
+
+    def test_builder_rejects_invalid_geometry_before_any_project_write(self):
+        for case in ('topology', 'clearance', 'hash'):
+            with self.subTest(case=case):
+                data = json.loads(json.dumps(self.geometry_data))
+                if case == 'topology':
+                    data['layout_summary']['cycle_rank'] = 3
+                elif case == 'clearance':
+                    data['clearance']['violations'] = [{'fixture': 'blocked'}]
+                else:
+                    data['glb_sha256'] = '0' * 64
+                self.geometry.write_text(json.dumps(data))
+                result = self.builder()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(list(self.project.rglob('*.umap')), [self.map_file])
+                self.assertFalse(self.report.exists())
+
+    def test_builder_rejects_paths_that_escape_game_content(self):
+        for option, value in (('--map-asset', '/Game/../Existing'),
+                               ('--asset-root', '/Engine/Generated')):
+            with self.subTest(option=option):
+                result = self.builder(option, value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.report.exists())
+
+    def test_invalid_light_intensity_is_rejected_before_a_plan_is_written(self):
+        for intensity in ('0', 'nan'):
+            with self.subTest(intensity=intensity):
+                result = self.builder('--light-intensity', intensity)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.report.exists())
+
+    def test_validator_plan_detects_changed_protected_map(self):
+        build = self.root / 'build.json'
+        target = self.project / 'Content/Independent/Maps/Gallery.umap'
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b'pretend saved map; no engine is exercised')
+        build.write_text(json.dumps({
+            'status': 'utility_gallery_preview_level_saved',
+            'map_asset': '/Game/Independent/Maps/Gallery',
+            'existing_map_sha256_before': {'Content/Existing/Original.umap':
+                                          hashlib.sha256(self.map_file.read_bytes()).hexdigest()},
+        }))
+        command = [sys.executable, str(TOOLS / 'scenes/validate_utility_gallery_preview.py'),
+                   '--project-dir', str(self.project), '--build-report', str(build),
+                   '--map-asset', '/Game/Independent/Maps/Gallery',
+                   '--report', str(self.report), '--dry-run']
+        result = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads(self.report.read_text())
+        self.assertEqual(report['status'], 'utility_gallery_validation_planned')
+        self.assertFalse(report['engine_executed'])
+        self.report.unlink()
+        self.map_file.write_bytes(b'changed')
+        result = subprocess.run(command, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.report.exists())
+
+
+class CollisionConfigurationTests(unittest.TestCase):
+    """Controlled engine boundary; actual UE execution is reported separately."""
+
+    def setUp(self):
+        sys.path.insert(0, str(TOOLS / 'scenes'))
+        import build_utility_gallery_preview
+        self.builder = build_utility_gallery_preview
+
+    def engine(self, *, available=True, removal=True, simple=0, convex=0):
+        class Subsystem:
+            def remove_collisions(self, mesh):
+                mesh.simple, mesh.convex = simple, convex
+                return removal
+
+            def get_simple_collision_count(self, mesh):
+                return mesh.simple
+
+            def get_convex_collision_count(self, mesh):
+                return mesh.convex
+
+        mesh = SimpleNamespace(simple=2, convex=4, saved=False, body={})
+        body = SimpleNamespace(set_editor_property=lambda key, value: mesh.body.update({key: value}))
+        mesh.get_editor_property = lambda key: body
+        def save(path):
+            mesh.saved = True
+            return True
+        subsystem = Subsystem()
+        api = SimpleNamespace(
+            StaticMeshEditorSubsystem=object(),
+            get_editor_subsystem=lambda kind: subsystem if available else None,
+            # Reproduce deprecated wrapper fallback when no subsystem exists.
+            EditorStaticMeshLibrary=subsystem,
+            EditorAssetLibrary=SimpleNamespace(save_asset=save),
+            CollisionTraceFlag=SimpleNamespace(CTF_USE_COMPLEX_AS_SIMPLE='complex'),
+        )
+        return api, mesh
+
+    def test_collision_removes_convex_hulls_and_saves_complex_only_mode(self):
+        api, mesh = self.engine()
+        with mock.patch.object(self.builder, 'unreal', api):
+            report = self.builder.configure_mesh_collision('/Game/Generated/Mesh', mesh)
+        self.assertTrue(mesh.saved)
+        self.assertEqual(mesh.body['collision_trace_flag'], 'complex')
+        self.assertEqual(report['remaining_simple_collision_count'], 0)
+        self.assertEqual(report['remaining_convex_collision_count'], 0)
+
+    def test_missing_editor_subsystem_reports_how_to_run_the_editor(self):
+        api, mesh = self.engine(available=False, simple=-1)
+        with mock.patch.object(self.builder, 'unreal', api):
+            with self.assertRaisesRegex(RuntimeError, 'StaticMeshEditorSubsystem.*ExecutePythonScript'):
+                self.builder.configure_mesh_collision('/Game/Generated/Mesh', mesh)
+        self.assertFalse(mesh.saved)
+
+    def test_failed_removal_invalid_query_and_remaining_convex_hulls_are_rejected(self):
+        for values in ({'removal': False}, {'simple': -1}, {'convex': 1}):
+            with self.subTest(values=values):
+                api, mesh = self.engine(**values)
+                with mock.patch.object(self.builder, 'unreal', api):
+                    with self.assertRaises(RuntimeError):
+                        self.builder.configure_mesh_collision('/Game/Generated/Mesh', mesh)
+                self.assertFalse(mesh.saved)
+
+
+if __name__ == '__main__':
+    unittest.main()

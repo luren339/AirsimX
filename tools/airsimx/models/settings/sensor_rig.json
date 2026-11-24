@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "units": "centimeters",
+  "note": "Illustrative visual attachments only. No LiDAR CAD is included; these transforms do not configure AirSim sensors, vehicle scale, inertia or collision.",
+  "components": [
+    {
+      "name": "AirsimXFrame",
+      "asset_relative_path": "Models/OpenQuadrotorFrame30cm",
+      "location_cm": [0.0, 0.0, 0.0],
+      "rotation_rpy_deg": [0.0, 0.0, 0.0],
+      "scale": [1.0, 1.0, 1.0]
+    },
+    {
+      "name": "AirsimXSensorMount",
+      "asset_relative_path": "Mounts/mid360s_mount_plate",
+      "location_cm": [0.0, 0.0, 3.65],
+      "rotation_rpy_deg": [0.0, 0.0, 0.0],
+      "scale": [1.0, 1.0, 1.0]
+    },
+    {
+      "name": "AirsimXCameraShell",
+      "asset_relative_path": "Camera/approximate_camera_shell",
+      "location_cm": [8.5, 0.0, 1.0],
+      "rotation_rpy_deg": [0.0, 0.0, 0.0],
+      "scale": [1.0, 1.0, 1.0]
+    }
+  ]
+}

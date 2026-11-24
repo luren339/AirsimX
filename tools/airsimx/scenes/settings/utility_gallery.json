@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "coordinate_units": "meters",
+  "columns_x_m": [-28.0, 0.0, 33.0],
+  "rows_y_m": [-22.0, 0.0, 25.0],
+  "dimensions_m": {
+    "corridor_width": 4.0,
+    "interior_height": 3.6,
+    "junction_width": 5.0,
+    "junction_height": 3.6,
+    "junction_wall_thickness": 0.25,
+    "shell_thickness": 0.25,
+    "branch_width": 3.0,
+    "branch_height": 3.3
+  },
+  "flight_envelope_m": {
+    "width": 2.0,
+    "height": 2.2,
+    "center_height": 1.8
+  },
+  "branches": [
+    {"id": "ServiceSpur_West", "from_node": "J10", "direction": "west", "length_m": 10.0},
+    {"id": "ServiceSpur_East", "from_node": "J22", "direction": "east", "length_m": 10.0}
+  ],
+  "fixture_spacing_m": {
+    "structural_joint_min": 4.8,
+    "structural_joint_max": 6.2,
+    "cable_support_min": 2.4,
+    "cable_support_max": 3.1,
+    "light_min": 4.6,
+    "light_max": 5.2
+  }
+}
