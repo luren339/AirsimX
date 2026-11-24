@@ -41,6 +41,15 @@ class Px4OdometryConversionTests(unittest.TestCase):
             with self.subTest(now=now, sample=sample):
                 self.assertIsNone(self.api().monotonic_px4_output_timestamp(now, sample, None))
 
+    def test_mapped_sample_must_advance_even_when_publish_clock_advances(self):
+        timestamp = self.api().monotonic_px4_output_timestamp
+        for sample in (29_965_000, 30_000_000):
+            with self.subTest(sample=sample):
+                self.assertIsNone(timestamp(30_005_000, sample, 30_000_000,
+                                            previous_sample_timestamp_us=30_000_000))
+        self.assertEqual(timestamp(30_200_000, 30_050_000, 30_100_000,
+                                   previous_sample_timestamp_us=30_000_000), 30_200_000)
+
     def test_rejects_large_first_local_pose(self):
         reason = self.api().fastlio_pose_rejection_reason((223.554, 144.730, -82.334),
                                                         sample_us=1_000_000)
@@ -85,16 +94,35 @@ class Px4OdometryConversionTests(unittest.TestCase):
                     previous_sample_us=1_000_000), 'non_increasing_sample_timestamp')
 
     def test_rejects_invalid_previous_position(self):
-        for previous in ((math.nan, 0.0, 0.0), (0.0, 0.0)):
+        for previous in ((math.nan, 0.0, 0.0), (0.0, 0.0), (1e200, 0.0, 0.0)):
             with self.subTest(previous=previous):
                 self.assertEqual(self.api().fastlio_pose_rejection_reason(
                     (0.0, 0.0, 0.0), sample_us=2, previous_position=previous,
                     previous_sample_us=1), 'invalid_previous_position')
 
+    def test_rejects_position_outside_float32_before_speed_arithmetic(self):
+        self.assertEqual(self.api().fastlio_pose_rejection_reason(
+            (1e200, 0.0, 0.0), sample_us=2, previous_position=(0.0, 0.0, 0.0),
+            previous_sample_us=1), 'position_out_of_float32_range')
+
     def test_covariance_uses_floor_for_zero_negative_and_unknown_values(self):
         sanitize = self.api()._finite_covariance
         self.assertEqual(sanitize((0.0, -1.0, math.nan)), (0.01, 0.01, 0.01))
         self.assertEqual(sanitize((math.inf, -math.inf, 0.5), 0.02), (0.02, 0.02, 0.5))
+
+    def test_covariance_rejects_finite_float32_overflow(self):
+        with self.assertRaises(ValueError):
+            self.api()._finite_covariance((0.0, 1e100, 0.0))
+
+    def test_variance_floor_must_be_positive_finite_and_usable_in_float32(self):
+        for floor in (0.0, -0.01, math.nan, math.inf, 1e100, 1e-100):
+            with self.subTest(floor=floor), self.assertRaisesRegex(ValueError, 'variance_floor'):
+                self.api()._finite_covariance((0.0, 0.0, 0.0), floor)
+
+    def test_px4_timestamp_must_fit_uint64(self):
+        for now, sample in (((1 << 64), 1), (1, (1 << 64))):
+            with self.subTest(now=now, sample=sample):
+                self.assertIsNone(self.api().monotonic_px4_output_timestamp(now, sample, None))
 
 
 if __name__ == '__main__':

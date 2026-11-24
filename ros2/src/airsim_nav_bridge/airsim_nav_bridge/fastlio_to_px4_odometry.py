@@ -14,6 +14,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from .px4_odometry_conversion import (
     fastlio_pose_rejection_reason,
     monotonic_px4_output_timestamp,
+    positive_finite_parameter,
     ros_odom_to_px4_vehicle_odometry,
     sim_sample_to_px4_us,
 )
@@ -25,16 +26,21 @@ class FastLioToPx4Odometry(Node):
         self.declare_parameter('input_topic', '/Odometry')
         self.declare_parameter('output_topic', '/fmu/in/vehicle_visual_odometry')
         self.declare_parameter('variance_floor', 0.01)
+        self.declare_parameter('input_has_body_twist', False)
         self.declare_parameter('max_initial_position_norm_m', 5.0)
         self.declare_parameter('max_position_speed_m_s', 15.0)
         self.declare_parameter('diagnostic_period_s', 5.0)
         self.declare_parameter('clock_topic', '/clock')
         self.declare_parameter('px4_time_topic', '/fmu/out/sensor_combined')
         self.input_topic = str(self.get_parameter('input_topic').value)
-        self.variance_floor = float(self.get_parameter('variance_floor').value)
-        self.max_initial_position_norm_m = float(self.get_parameter('max_initial_position_norm_m').value)
-        self.max_position_speed_m_s = float(self.get_parameter('max_position_speed_m_s').value)
-        self.diagnostic_period_s = float(self.get_parameter('diagnostic_period_s').value)
+        self.input_has_body_twist = bool(self.get_parameter('input_has_body_twist').value)
+        try:
+            for parameter in ('variance_floor', 'max_initial_position_norm_m',
+                              'max_position_speed_m_s', 'diagnostic_period_s'):
+                setattr(self, parameter, positive_finite_parameter(parameter, self.get_parameter(parameter).value))
+        except (TypeError, ValueError, OverflowError):
+            self.destroy_node()
+            raise
         output_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         self.publisher = self.create_publisher(
             VehicleOdometry, str(self.get_parameter('output_topic').value), output_qos
@@ -54,6 +60,7 @@ class FastLioToPx4Odometry(Node):
         self._last_accepted_position = None
         self._last_accepted_sample_us = None
         self._last_output_timestamp_us = None
+        self._last_output_sample_timestamp_us = None
         self._timestamp_rejection_count = 0
         self._last_rejection_log = 0.0
         self._count = 0
@@ -103,30 +110,34 @@ class FastLioToPx4Odometry(Node):
                 sample_sim_ns = int(odom.header.stamp.sec) * 1_000_000_000 + int(odom.header.stamp.nanosec)
                 sample_px4_us = sim_sample_to_px4_us(sample_sim_ns, self._sim_clock_ns, self._px4_now_us)
                 now_us = monotonic_px4_output_timestamp(
-                    self._px4_now_us, sample_px4_us, self._last_output_timestamp_us
+                    self._px4_now_us, sample_px4_us, self._last_output_timestamp_us,
+                    previous_sample_timestamp_us=self._last_output_sample_timestamp_us,
                 )
                 if now_us is None:
                     self._timestamp_rejection_count += 1
                     now = time.monotonic()
                     if now - self._last_rejection_log >= self.diagnostic_period_s:
                         self.get_logger().warning(
-                            'Skipped FAST-LIO odometry because PX4 output timestamp did not advance: '
+                            'Skipped FAST-LIO odometry because PX4 publish/sample time did not advance: '
                             f'px4_now={self._px4_now_us} us, sample={sample_px4_us} us, '
-                            f'previous_output={self._last_output_timestamp_us} us'
+                            f'previous_output={self._last_output_timestamp_us} us, '
+                            f'previous_sample={self._last_output_sample_timestamp_us} us'
                         )
                         self._last_rejection_log = now
                     return
                 msg = ros_odom_to_px4_vehicle_odometry(
-                    odom, now_us=now_us, timestamp_sample_us=sample_px4_us, variance_floor=self.variance_floor
+                    odom, now_us=now_us, timestamp_sample_us=sample_px4_us, variance_floor=self.variance_floor,
+                    input_has_body_twist=self.input_has_body_twist,
                 )
             except (TypeError, ValueError, OverflowError) as exc:
                 self.get_logger().error(f'Dropping invalid FAST-LIO odometry: {exc}')
                 return
+            self.publisher.publish(msg)
             self._last_sample_us = sample_us
             self._last_accepted_position = position
             self._last_accepted_sample_us = sample_us
             self._last_output_timestamp_us = int(msg.timestamp)
-            self.publisher.publish(msg)
+            self._last_output_sample_timestamp_us = int(msg.timestamp_sample)
             self._count += 1
             now = time.monotonic()
             if now - self._last_report >= self.diagnostic_period_s:

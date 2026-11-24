@@ -47,7 +47,7 @@ class VehicleOdometryMessageTests(unittest.TestCase):
         source.pose.pose.orientation.z = half
         source.twist.twist.linear.x, source.twist.twist.linear.y, source.twist.twist.linear.z = (4.0, 5.0, 6.0)
         source.twist.twist.angular.x, source.twist.twist.angular.y, source.twist.twist.angular.z = (0.1, 0.2, 0.3)
-        msg = ros_odom_to_px4_vehicle_odometry(source, now_us=1_234_568)
+        msg = ros_odom_to_px4_vehicle_odometry(source, now_us=1_234_568, input_has_body_twist=True)
         # Exercise Jazzy's generated setters and wire serialization, not stand-in messages.
         msg = deserialize_message(serialize_message(msg), VehicleOdometry)
         self.assertEqual((msg.timestamp, msg.timestamp_sample), (1_234_568, 1_234_567))
@@ -78,7 +78,7 @@ class VehicleOdometryMessageTests(unittest.TestCase):
         source.pose.covariance[1] = 99.0  # Off-diagonal terms are not sent by VehicleOdometry.
         for index, value in ((0, 0.36), (7, 0.49), (14, 0.64)):
             source.twist.covariance[index] = value
-        msg = ros_odom_to_px4_vehicle_odometry(source, variance_floor=0.02)
+        msg = ros_odom_to_px4_vehicle_odometry(source, variance_floor=0.02, input_has_body_twist=True)
         for values, expected in ((msg.position_variance, (0.25, 0.02, 0.02)),
                                  (msg.orientation_variance, (0.04, 0.09, 0.02)),
                                  (msg.velocity_variance, (0.36, 0.49, 0.64))):
@@ -104,8 +104,74 @@ class VehicleOdometryMessageTests(unittest.TestCase):
             with self.subTest(stamp=stamp), self.assertRaises(ValueError):
                 ros_odom_to_px4_vehicle_odometry(odometry(stamp))
 
+    def test_moving_pose_only_does_not_invent_zero_velocity(self):
+        for stamp, position in ((10_000_000_000, (0.0, 0.0, 0.0)),
+                                (10_100_000_000, (0.2, 0.0, 0.0))):
+            source = odometry(stamp, position)
+            msg = deserialize_message(serialize_message(ros_odom_to_px4_vehicle_odometry(source)),
+                                      VehicleOdometry)
+            self.assertEqual(msg.velocity_frame, VehicleOdometry.VELOCITY_FRAME_UNKNOWN)
+            for values in (msg.velocity, msg.angular_velocity, msg.velocity_variance):
+                self.assertTrue(all(math.isnan(value) for value in values))
 
-class OdometryNodeTests(unittest.TestCase):
+    def test_pose_only_ignores_unmeasured_twist_and_its_covariance(self):
+        source = odometry()
+        source.twist.twist.linear.x = math.inf
+        source.twist.twist.angular.z = 1e100
+        source.twist.covariance[0] = 1e100
+        msg = ros_odom_to_px4_vehicle_odometry(source)
+        self.assertEqual(msg.velocity_frame, VehicleOdometry.VELOCITY_FRAME_UNKNOWN)
+        for values in (msg.velocity, msg.angular_velocity, msg.velocity_variance):
+            self.assertTrue(all(math.isnan(value) for value in values))
+
+    def test_rejects_non_finite_and_float32_overflow_positions(self):
+        for value in (math.nan, math.inf, 1e100, -1e100):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                ros_odom_to_px4_vehicle_odometry(odometry(position=(value, 0.0, 0.0)))
+
+    def test_rejects_invalid_trusted_twist_before_float32_cast(self):
+        for attribute in ('linear', 'angular'):
+            for value in (math.nan, math.inf, 1e100, -1e100):
+                with self.subTest(attribute=attribute, value=value), self.assertRaises(ValueError):
+                    source = odometry()
+                    getattr(source.twist.twist, attribute).x = value
+                    ros_odom_to_px4_vehicle_odometry(source, input_has_body_twist=True)
+
+    def test_rejects_finite_covariance_overflow(self):
+        for field, index in (('pose', 0), ('pose', 21), ('twist', 0)):
+            with self.subTest(field=field, index=index), self.assertRaises(ValueError):
+                source = odometry()
+                getattr(source, field).covariance[index] = 1e100
+                ros_odom_to_px4_vehicle_odometry(source, input_has_body_twist=True)
+
+    def test_rejects_out_of_range_px4_message_timestamps(self):
+        for sample in (0, -1, (1 << 64)):
+            with self.subTest(sample=sample), self.assertRaises(ValueError):
+                ros_odom_to_px4_vehicle_odometry(odometry(), timestamp_sample_us=sample)
+        with self.assertRaises(ValueError):
+            ros_odom_to_px4_vehicle_odometry(odometry(), now_us=(1 << 64))
+
+    def test_float32_boundary_values_remain_finite_after_serialization(self):
+        maximum = 3.4028234663852886e38
+        source = odometry(position=(maximum, -maximum, 0.0))
+        source.pose.pose.orientation.w = source.pose.pose.orientation.x = 1e100
+        source.twist.twist.linear.x = maximum
+        source.twist.twist.angular.z = -maximum
+        for covariance in (source.pose.covariance, source.twist.covariance):
+            for index in (0, 7, 14, 21, 28, 35):
+                covariance[index] = maximum
+        msg = ros_odom_to_px4_vehicle_odometry(source, input_has_body_twist=True)
+        msg = deserialize_message(serialize_message(msg), VehicleOdometry)
+        for values in (msg.position, msg.q, msg.velocity, msg.angular_velocity,
+                       msg.position_variance, msg.orientation_variance, msg.velocity_variance):
+            self.assertTrue(all(math.isfinite(value) for value in values))
+        self.assertEqual(msg.position[0], maximum)
+        self.assertAlmostEqual(msg.q[0], math.sqrt(0.5), places=6)
+
+
+class _OdometryNodeTestCase(unittest.TestCase):
+    extra_parameters = ()
+
     def setUp(self):
         name = 'airsim_nav_bridge.fastlio_to_px4_odometry'
         self.assertIsNotNone(importlib.util.find_spec(name), 'odometry node must be installable')
@@ -115,6 +181,8 @@ class OdometryNodeTests(unittest.TestCase):
         for parameter, suffix in (('input_topic', '/odom'), ('output_topic', '/px4_odom'),
                                   ('clock_topic', '/clock'), ('px4_time_topic', '/px4_time')):
             self.arguments += ['-p', parameter + ':=' + self.prefix + suffix]
+        for parameter, value in self.extra_parameters:
+            self.arguments += ['-p', parameter + ':=' + value]
         rclpy.init(args=self.arguments)
         self.addCleanup(rclpy.try_shutdown)
         self.bridge = api.FastLioToPx4Odometry()
@@ -155,6 +223,8 @@ class OdometryNodeTests(unittest.TestCase):
         # Wait for the actual subscriber callbacks before sending the sample.
         self.wait_until(lambda: self.bridge._sim_clock_ns == sim_ns and self.bridge._px4_now_us == px4_us)
 
+
+class OdometryNodeTests(_OdometryNodeTestCase):
     def test_requires_both_clocks_then_publishes_static_estimate(self):
         self.odom_pub.publish(odometry())
         self.settle()
@@ -172,6 +242,19 @@ class OdometryNodeTests(unittest.TestCase):
         self.assertEqual((self.received[0].timestamp, self.received[0].timestamp_sample),
                          (30_000_000, 30_000_000))
         self.assertEqual(tuple(self.received[0].position), (0.0, 0.0, 0.0))
+
+    def test_pose_only_motion_keeps_twist_unknown_on_wire(self):
+        self.clocks()
+        self.odom_pub.publish(odometry())
+        self.wait_until(lambda: len(self.received) == 1)
+        self.clocks(10_100_000_000, 30_100_000)
+        self.odom_pub.publish(odometry(10_100_000_000, (0.2, 0.0, 0.0)))
+        self.wait_until(lambda: len(self.received) == 2)
+        self.assertAlmostEqual(self.received[-1].position[0], 0.2, places=6)
+        for msg in self.received:
+            self.assertEqual(msg.velocity_frame, VehicleOdometry.VELOCITY_FRAME_UNKNOWN)
+            for values in (msg.velocity, msg.angular_velocity, msg.velocity_variance):
+                self.assertTrue(all(math.isnan(value) for value in values))
 
     def test_rejects_duplicate_backward_and_implausible_samples(self):
         self.clocks()
@@ -221,6 +304,27 @@ class OdometryNodeTests(unittest.TestCase):
         self.odom_pub.publish(odometry())
         self.wait_until(lambda: len(self.received) == 1)
 
+    def test_mapped_sample_rollback_is_rejected_without_advancing_input_highwater(self):
+        self.clocks()
+        self.odom_pub.publish(odometry())
+        self.wait_until(lambda: len(self.received) == 1)
+        # ROS 10.01 s -> PX4 29,965,000 us, though publish time is 30,005,000 us.
+        self.clocks(10_050_000_000, 30_005_000)
+        self.odom_pub.publish(odometry(10_010_000_000))
+        self.settle()
+        self.assertEqual(len(self.received), 1)
+        # Equal mapped sample is also invalid despite an advancing publication time.
+        self.clocks(10_050_000_000, 30_040_000)
+        self.odom_pub.publish(odometry(10_010_000_000))
+        self.settle()
+        self.assertEqual(len(self.received), 1)
+        # Retry the identical ROS stamp after the mapping advances.
+        self.clocks(10_050_000_000, 30_060_000)
+        self.odom_pub.publish(odometry(10_010_000_000))
+        self.wait_until(lambda: len(self.received) == 2)
+        self.assertEqual(self.received[-1].timestamp_sample, 30_020_000)
+        self.assertEqual(self.received[-1].timestamp, 30_060_000)
+
     @unittest.skipUnless(os.name == 'posix', 'Jazzy Linux SIGINT lifecycle check')
     def test_node_process_exits_cleanly_on_sigint(self):
         process = subprocess.Popen(
@@ -237,6 +341,63 @@ class OdometryNodeTests(unittest.TestCase):
                 process.communicate()
         self.assertEqual(process.returncode, 0, output)
         self.assertNotIn('Traceback', output)
+
+
+class BodyTwistNodeTests(_OdometryNodeTestCase):
+    extra_parameters = (('input_has_body_twist', 'true'),)
+
+    def test_explicit_body_flu_twist_is_forwarded(self):
+        self.clocks()
+        source = odometry()
+        source.twist.twist.linear.x, source.twist.twist.linear.y, source.twist.twist.linear.z = (4.0, 5.0, 6.0)
+        source.twist.twist.angular.x, source.twist.twist.angular.y, source.twist.twist.angular.z = (0.1, 0.2, 0.3)
+        self.odom_pub.publish(source)
+        self.wait_until(lambda: len(self.received) == 1)
+        msg = self.received[0]
+        self.assertEqual(msg.velocity_frame, VehicleOdometry.VELOCITY_FRAME_BODY_FRD)
+        self.assertEqual(tuple(msg.velocity), (4.0, -5.0, -6.0))
+        for value, expected in zip(msg.angular_velocity, (0.1, -0.2, -0.3)):
+            self.assertAlmostEqual(value, expected, places=6)
+
+    def test_invalid_measurements_are_dropped_without_poisoning_sample_state(self):
+        self.clocks()
+        invalid = []
+        for attribute, value in (('linear', math.inf), ('linear', 1e100), ('angular', 1e100)):
+            source = odometry()
+            getattr(source.twist.twist, attribute).x = value
+            invalid.append(source)
+        for field, index in (('pose', 0), ('pose', 21), ('twist', 0)):
+            source = odometry()
+            getattr(source, field).covariance[index] = 1e100
+            invalid.append(source)
+        for source in invalid:
+            self.odom_pub.publish(source)
+        self.settle()
+        self.assertEqual(self.received, [])
+        self.odom_pub.publish(odometry())
+        self.wait_until(lambda: len(self.received) == 1)
+        self.assertEqual(self.received[0].timestamp_sample, 30_000_000)
+
+
+class OdometryConfigurationTests(unittest.TestCase):
+    def test_refuses_invalid_numeric_configuration_at_startup(self):
+        api = importlib.import_module('airsim_nav_bridge.fastlio_to_px4_odometry')
+        for parameter in ('variance_floor', 'max_initial_position_norm_m',
+                          'max_position_speed_m_s', 'diagnostic_period_s'):
+            values = ['0.0', '-0.01', '.nan', '.inf']
+            if parameter == 'variance_floor':
+                values += ['1.0e+100', '1.0e-100']
+            for value in values:
+                with self.subTest(parameter=parameter, value=value):
+                    rclpy.init(args=['--ros-args', '-p', parameter + ':=' + value])
+                    node = None
+                    try:
+                        with self.assertRaisesRegex(ValueError, parameter):
+                            node = api.FastLioToPx4Odometry()
+                    finally:
+                        if node is not None:
+                            node.destroy_node()
+                        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':

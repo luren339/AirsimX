@@ -4,6 +4,8 @@
   ros__parameters:
     input_topic: /Odometry
     output_topic: /fmu/in/vehicle_visual_odometry
+    # FAST-LIO2 publishes pose only; do not turn its unset twist into measured zero.
+    input_has_body_twist: false
     variance_floor: 0.01
     max_initial_position_norm_m: 5.0
     max_position_speed_m_s: 15.0

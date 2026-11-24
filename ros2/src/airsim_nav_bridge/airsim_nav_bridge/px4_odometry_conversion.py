@@ -10,6 +10,35 @@ if TYPE_CHECKING:
     from px4_msgs.msg import VehicleOdometry
 
 
+FLOAT32_MAX = 3.4028234663852886e38
+FLOAT32_MIN_POSITIVE = 2.0 ** -149
+PX4_TIMESTAMP_MAX = (1 << 64) - 1
+
+
+def positive_finite_parameter(name: str, value: float) -> float:
+    """Validate numeric bridge settings before subscriptions can publish data."""
+    value = float(value)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f'{name} must be finite and positive')
+    if name == 'variance_floor' and not FLOAT32_MIN_POSITIVE <= value <= FLOAT32_MAX:
+        raise ValueError('variance_floor must remain positive and finite in float32')
+    return value
+
+
+def _finite_float32_values(values, field: str) -> tuple[float, ...]:
+    values = tuple(float(value) for value in values)
+    if any(not math.isfinite(value) or abs(value) > FLOAT32_MAX for value in values):
+        raise ValueError(f'{field} must contain finite values within the float32 range')
+    return values
+
+
+def _px4_timestamp(value: int, field: str) -> int:
+    value = int(value)
+    if not 0 < value <= PX4_TIMESTAMP_MAX:
+        raise ValueError(f'{field} must be a positive uint64 timestamp')
+    return value
+
+
 def sim_sample_to_px4_us(sample_stamp_ns: int, sim_clock_ns: int, px4_now_us: int) -> int:
     """Map an AirSim sample time into PX4's local HRT clock using /clock and sensor_combined."""
     sample_ns, sim_ns, px4_us = int(sample_stamp_ns), int(sim_clock_ns), int(px4_now_us)
@@ -21,11 +50,12 @@ def sim_sample_to_px4_us(sample_stamp_ns: int, sim_clock_ns: int, px4_now_us: in
 
 
 def _finite_covariance(values, floor: float = 0.01) -> tuple[float, float, float]:
+    floor = positive_finite_parameter('variance_floor', floor)
     result = []
     for value in values:
         value = float(value)
         result.append(max(value, floor) if math.isfinite(value) else floor)
-    return tuple(result)
+    return _finite_float32_values(result, 'covariance')
 
 
 def ros_odom_to_px4_vehicle_odometry(
@@ -34,13 +64,15 @@ def ros_odom_to_px4_vehicle_odometry(
     now_us: int | None = None,
     variance_floor: float = 0.01,
     timestamp_sample_us: int | None = None,
+    input_has_body_twist: bool = False,
 ) -> VehicleOdometry:
     """Convert FAST-LIO2 odometry to PX4 EV input without truth or GNSS data.
 
     Assumption: FAST-LIO2 consumes FLU sensor measurements and publishes its
     local world in NWU axes. PX4 FRD conversion flips Y and Z for both the
-    local pose frame and body-frame twist. Variances use a conservative floor
-    because this FAST-LIO2 build publishes zero covariance.
+    local pose frame and, only when explicitly supplied, body-frame twist.
+    FAST-LIO2's pose-only output leaves twist unknown rather than measured zero.
+    Variances use a conservative floor for zero/unknown covariance.
     """
     from px4_msgs.msg import VehicleOdometry
 
@@ -48,8 +80,10 @@ def ros_odom_to_px4_vehicle_odometry(
     if stamp_ns <= 0:
         raise ValueError(f"FAST-LIO odometry has invalid header timestamp: {stamp_ns}")
     raw_sample_us = stamp_ns // 1_000
-    sample_us = raw_sample_us if timestamp_sample_us is None else int(timestamp_sample_us)
-    message_time_us = sample_us if now_us is None else max(sample_us, int(now_us))
+    sample_us = _px4_timestamp(raw_sample_us if timestamp_sample_us is None else timestamp_sample_us,
+                               'timestamp_sample')
+    message_time_us = sample_us if now_us is None else max(sample_us, _px4_timestamp(now_us, 'timestamp'))
+    variance_floor = positive_finite_parameter('variance_floor', variance_floor)
 
     position = odom.pose.pose.position
     orientation = odom.pose.pose.orientation
@@ -59,27 +93,33 @@ def ros_odom_to_px4_vehicle_odometry(
         raise ValueError("FAST-LIO odometry quaternion is zero or non-finite")
     qx, qy, qz, qw = qx / q_norm, qy / q_norm, qz / q_norm, qw / q_norm
 
-    linear = odom.twist.twist.linear
-    angular = odom.twist.twist.angular
     msg = VehicleOdometry()
     msg.timestamp = message_time_us
     msg.timestamp_sample = sample_us
     msg.pose_frame = int(VehicleOdometry.POSE_FRAME_FRD)
-    msg.position = [float(position.x), -float(position.y), -float(position.z)]
+    msg.position = _finite_float32_values((position.x, -position.y, -position.z), 'position')
     # Quaternion is Hamiltonian (w,x,y,z); conjugation by the 180-degree X-axis
     # basis change maps NWU/FLU attitude into local FRD without changing yaw origin.
-    msg.q = [qw, qx, -qy, -qz]
-    msg.velocity_frame = int(VehicleOdometry.VELOCITY_FRAME_BODY_FRD)
-    msg.velocity = [float(linear.x), -float(linear.y), -float(linear.z)]
-    msg.angular_velocity = [float(angular.x), -float(angular.y), -float(angular.z)]
+    msg.q = _finite_float32_values((qw, qx, -qy, -qz), 'normalized quaternion')
+    if input_has_body_twist:
+        linear = odom.twist.twist.linear
+        angular = odom.twist.twist.angular
+        msg.velocity_frame = int(VehicleOdometry.VELOCITY_FRAME_BODY_FRD)
+        msg.velocity = _finite_float32_values((linear.x, -linear.y, -linear.z), 'velocity')
+        msg.angular_velocity = _finite_float32_values((angular.x, -angular.y, -angular.z), 'angular_velocity')
+        msg.velocity_variance = _finite_covariance(
+            (odom.twist.covariance[0], odom.twist.covariance[7], odom.twist.covariance[14]), variance_floor
+        )
+    else:
+        msg.velocity_frame = int(VehicleOdometry.VELOCITY_FRAME_UNKNOWN)
+        msg.velocity = [math.nan, math.nan, math.nan]
+        msg.angular_velocity = [math.nan, math.nan, math.nan]
+        msg.velocity_variance = [math.nan, math.nan, math.nan]
     msg.position_variance = _finite_covariance(
         (odom.pose.covariance[0], odom.pose.covariance[7], odom.pose.covariance[14]), variance_floor
     )
     msg.orientation_variance = _finite_covariance(
         (odom.pose.covariance[21], odom.pose.covariance[28], odom.pose.covariance[35]), variance_floor
-    )
-    msg.velocity_variance = _finite_covariance(
-        (odom.twist.covariance[0], odom.twist.covariance[7], odom.twist.covariance[14]), variance_floor
     )
     msg.reset_counter = 0
     msg.quality = 0  # quality is unreported by FAST-LIO2; do not invent it.
@@ -101,6 +141,8 @@ def fastlio_pose_rejection_reason(
     xyz = tuple(float(value) for value in position)
     if not all(math.isfinite(value) for value in xyz):
         return 'non_finite_position'
+    if any(abs(value) > FLOAT32_MAX for value in xyz):
+        return 'position_out_of_float32_range'
     if int(sample_us) <= 0:
         return 'invalid_sample_timestamp'
 
@@ -116,7 +158,7 @@ def fastlio_pose_rejection_reason(
     if dt_s <= 0.0:
         return 'non_increasing_sample_timestamp'
     previous = tuple(float(value) for value in previous_position)
-    if len(previous) != 3 or not all(math.isfinite(value) for value in previous):
+    if len(previous) != 3 or not all(math.isfinite(value) and abs(value) <= FLOAT32_MAX for value in previous):
         return 'invalid_previous_position'
     distance_m = math.sqrt(sum((xyz[i] - previous[i]) ** 2 for i in range(3)))
     speed_m_s = distance_m / dt_s
@@ -129,11 +171,14 @@ def monotonic_px4_output_timestamp(
     px4_now_us: int,
     sample_px4_us: int,
     previous_output_timestamp_us: int | None,
+    previous_sample_timestamp_us: int | None = None,
 ) -> int | None:
-    """Return a strictly advancing PX4 publish timestamp, or None if the clock is stale."""
+    """Require both the PX4 publish time and mapped sample time to advance."""
     px4_now_us = int(px4_now_us)
     sample_px4_us = int(sample_px4_us)
-    if px4_now_us <= 0 or sample_px4_us <= 0:
+    if not 0 < px4_now_us <= PX4_TIMESTAMP_MAX or not 0 < sample_px4_us <= PX4_TIMESTAMP_MAX:
+        return None
+    if previous_sample_timestamp_us is not None and sample_px4_us <= int(previous_sample_timestamp_us):
         return None
     timestamp_us = max(px4_now_us, sample_px4_us)
     if previous_output_timestamp_us is not None and timestamp_us <= int(previous_output_timestamp_us):
