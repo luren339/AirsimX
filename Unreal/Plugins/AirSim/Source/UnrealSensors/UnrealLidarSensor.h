@@ -7,6 +7,7 @@
 #include "GameFramework/Actor.h"
 #include "sensors/lidar/LidarSimple.hpp"
 #include "NedTransform.h"
+#include "LivoxScanPattern.hpp"
 
 // UnrealLidarSensor implementation that uses Ray Tracing in Unreal.
 // The implementation uses a model similar to CARLA Lidar implementation.
@@ -39,4 +40,8 @@ private:
 
     msr::airlib::vector<msr::airlib::real_T> laser_angles_;
     float current_horizontal_angle_ = 0.0f;
+    LivoxScanPattern scan_pattern_;
+    std::size_t scan_pattern_index_ = 0;
+    bool use_scan_pattern_ = false;
+    LivoxScanSamplingMode scan_pattern_mode_ = LivoxScanSamplingMode::Sequential;
 };

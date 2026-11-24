@@ -1,4 +1,6 @@
 #include "SettingsTest.hpp"
+#include "LidarSettingsTest.hpp"
+#include "LidarScanPatternTest.hpp"
 #include "SimpleFlightTest.hpp"
 #include "ScheduledExecutorTest.hpp"
 #include "QuaternionTest.hpp"
@@ -45,6 +47,8 @@ int main(int argc, char** argv)
         { "Quaternion", std::unique_ptr<TestBase>(new QuaternionTest()) },
         { "Celestial", std::unique_ptr<TestBase>(new CelestialTest()) },
         { "Settings", std::unique_ptr<TestBase>(new SettingsTest()) },
+        { "LidarSettings", std::unique_ptr<TestBase>(new LidarSettingsTest()) },
+        { "LidarScanPattern", std::unique_ptr<TestBase>(new LidarScanPatternTest()) },
         { "SimpleFlight", std::unique_ptr<TestBase>(new SimpleFlightTest()) },
         { "SimpleFlightLanding", std::unique_ptr<TestBase>(new SimpleFlightLandingTest()) },
         { "ScheduledExecutor", std::unique_ptr<TestBase>(new ScheduledExecutorTest()) }

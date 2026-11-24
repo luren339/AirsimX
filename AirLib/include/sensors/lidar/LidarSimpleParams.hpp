@@ -40,6 +40,9 @@ namespace airlib
 
         bool external_controller = true;
 
+        std::string scan_pattern_file;
+        std::string scan_pattern_mode = "sequential";
+
         real_T update_frequency = 10; // Hz
         real_T startup_delay = 0; // sec
 
@@ -55,6 +58,11 @@ namespace airlib
             draw_debug_points = settings_json.getBool("DrawDebugPoints", draw_debug_points);
             data_frame = settings_json.getString("DataFrame", data_frame);
             external_controller = settings_json.getBool("ExternalController", external_controller);
+            scan_pattern_file = settings_json.getString("ScanPatternFile", scan_pattern_file);
+            scan_pattern_mode = settings_json.getString("ScanPatternMode", scan_pattern_mode);
+            update_frequency = settings_json.getFloat("UpdateFrequency", update_frequency);
+            if (!std::isfinite(update_frequency) || update_frequency <= 0)
+                throw std::invalid_argument("LiDAR UpdateFrequency must be finite and positive");
 
             vertical_FOV_upper = settings_json.getFloat("VerticalFOVUpper", Utils::nan<float>());
 
