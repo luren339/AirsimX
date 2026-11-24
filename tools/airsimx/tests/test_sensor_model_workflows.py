@@ -6,8 +6,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from _generated_geometry_test_utils import TOOLS
+from _ue_asset_test_utils import import_engine
 
 
 class SensorModelWorkflowTests(unittest.TestCase):
@@ -101,6 +103,43 @@ class InheritedRootSelectionTests(unittest.TestCase):
             workflow.select_scene_root([
                 {'variable_name': 'BodyMesh', 'object_name': 'one', 'is_scene_component': True},
                 {'variable_name': 'BodyMesh', 'object_name': 'two', 'is_scene_component': True}], 'BodyMesh')
+
+
+class SensorImportExecutionTests(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, str(TOOLS / 'models'))
+        import import_generated_sensor_meshes
+        self.importer = import_generated_sensor_meshes
+        self.plan = {'replace_existing': False, 'items': [
+            {'source': 'camera.obj', 'destination': '/Game/Generated/Camera',
+             'asset': '/Game/Generated/Camera/Camera'}]}
+
+    def test_default_import_refuses_a_material_in_the_destination_before_importing(self):
+        api, state = import_engine(['/Game/Generated/Camera/Camera.Camera'],
+                                   ['/Game/Generated/Camera/housing.housing'])
+        with mock.patch.dict(sys.modules, {'unreal': api}):
+            with self.assertRaises(RuntimeError):
+                self.importer.run_import(self.plan)
+        self.assertEqual(state.imports, 0)
+        self.assertTrue(state.unrelated_dirty)
+
+    def test_import_never_saves_unrelated_assets_in_the_target_directory(self):
+        api, state = import_engine(['/Game/Generated/Camera/Camera.Camera'])
+        self.plan['replace_existing'] = True
+        with mock.patch.dict(sys.modules, {'unreal': api}):
+            report = self.importer.run_import(self.plan)
+        self.assertEqual(report['status'], 'sensor_models_imported')
+        self.assertTrue(state.unrelated_dirty)
+
+    def test_empty_or_mismatched_task_result_cannot_reuse_an_old_mesh(self):
+        self.plan['replace_existing'] = True
+        for paths in ([], ['/Game/Generated/Other.Other']):
+            with self.subTest(paths=paths):
+                api, state = import_engine(paths)
+                with mock.patch.dict(sys.modules, {'unreal': api}):
+                    with self.assertRaises(RuntimeError):
+                        self.importer.run_import(self.plan)
+                self.assertEqual(state.loads, [])
 
 
 if __name__ == '__main__':

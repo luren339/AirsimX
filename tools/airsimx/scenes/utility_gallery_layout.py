@@ -89,6 +89,8 @@ def build_layout(config: dict[str, Any] | str | Path | None = None) -> dict[str,
     for name in ("structural_joint", "cable_support", "light"):
         if fixtures[f"{name}_max"] <= fixtures[f"{name}_min"]:
             raise ValueError(f"{name} spacing maximum must exceed minimum")
+        if round(fixtures[f"{name}_min"], 3) <= 0:
+            raise ValueError(f"{name} spacing must remain positive at millimeter precision")
     if len(columns) != 3 or len(rows) != 3:
         raise ValueError("utility gallery preview requires exactly three columns and rows")
     if any(b <= a for a, b in zip(columns, columns[1:])):
@@ -99,8 +101,8 @@ def build_layout(config: dict[str, Any] | str | Path | None = None) -> dict[str,
         raise ValueError("flight envelope is wider than the corridor")
     if dims["interior_height"] < envelope["height"]:
         raise ValueError("flight envelope is taller than the corridor")
-    if dims["junction_width"] < dims["corridor_width"]:
-        raise ValueError("junction rooms must be at least as wide as corridors")
+    if dims["junction_width"] <= max(dims["corridor_width"], dims["branch_width"]):
+        raise ValueError("junction rooms must be strictly wider than corridors and branches")
     if dims["branch_width"] < envelope["width"]:
         raise ValueError("flight envelope is wider than a branch")
     if envelope["center_height"] - envelope["height"] / 2 < 0 or (
@@ -161,20 +163,32 @@ def build_layout(config: dict[str, Any] | str | Path | None = None) -> dict[str,
             )
             ordinal += 1
 
+    occupied_exits = {node["id"]: set() for node in nodes}
+    for edge in edges:
+        occupied_exits[edge["from"]].add(edge["direction"])
+        occupied_exits[edge["to"]].add(OPPOSITE[edge["direction"]])
+    used_ids = {node["id"] for node in nodes} | {edge["id"] for edge in edges}
     branches = []
     for branch_cfg in cfg["branches"]:
+        branch_id = branch_cfg["id"]
+        if not isinstance(branch_id, str) or not branch_id or branch_id in used_ids:
+            raise ValueError(f"branch requires a unique nonempty id: {branch_id}")
         node_id = branch_cfg["from_node"]
         if node_id not in node_lookup:
             raise ValueError(f"branch {branch_cfg['id']} references unknown node {node_id}")
         direction = branch_cfg["direction"]
         if direction not in VECTORS:
             raise ValueError(f"branch {branch_cfg['id']} has unknown direction {direction}")
+        if direction in occupied_exits[node_id]:
+            raise ValueError(f"branch exit already occupied: {node_id}/{direction}")
         vx, vy = VECTORS[direction]
         center = node_lookup[node_id]
         start = (center[0] + vx * room_half, center[1] + vy * room_half)
         length = float(branch_cfg["length_m"])
         if not math.isfinite(length) or length <= 0:
             raise ValueError("branch lengths must be finite and positive")
+        used_ids.add(branch_id)
+        occupied_exits[node_id].add(direction)
         end = (start[0] + vx * length, start[1] + vy * length)
         branches.append(
             {

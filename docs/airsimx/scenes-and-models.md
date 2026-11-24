@@ -58,7 +58,10 @@ Its analytic fixture checks report 2,383 checked placements, no violations,
 checks of generated placement records, not swept-volume collision queries or
 flight/sensor acceptance. Changing the settings requires checking the new output.
 Finite, positive dimensions/spacing and envelope bounds are validated before
-generation.
+generation. Junctions must be strictly wider than both corridors and branches;
+fixture spacing must stay positive after rounding to millimeters. Branch IDs
+must be unique and each branch must use a junction exit not occupied by a main
+corridor or another branch. Unsupported configurations fail at layout loading.
 
 The layout uses meters and Z-up coordinates. GLB positions and normals use the
 proper rotation `(x, z, -y)` into glTF Y-up coordinates. UE preview light/start
@@ -149,7 +152,10 @@ then run `scenes/validate_utility_gallery_preview.py` in the Editor with
 `--project-dir`, the same `--map-asset`, `--build-report` and a separate `--report`.
 The validator reopens the map and checks actor/light/start counts, bounds,
 material groups, collision configuration and protected-map hashes. Its dry run
-only validates the saved build report and filesystem hashes.
+only validates the saved build report, source manifest and filesystem hashes.
+Reopen bounds are derived from that manifest's coordinate transform with a
+0.1 cm tolerance; mesh path, material count and actor location/rotation/scale
+must also agree with the build report.
 
 `models/import_generated_sensor_meshes.py --generated-dir DIR --asset-root /Game/MyDrone`
 imports the camera, mount and frame into `Camera`, `Mounts` and `Models` subfolders.
@@ -169,8 +175,14 @@ and asset root for this tool; only `UtilityGallery_` actors are replaced in an
 existing target level. For rig Blueprints, replacement additionally requires the
 script's metadata marker and unchanged parent/component-name set; it updates the
 same components without adding duplicates. A different parent/name set needs a
-new Blueprint path. An unrelated Blueprint is never overwritten. Import/build
-errors are raised; an unsuccessful run may leave partially generated assets in
+new Blueprint path. An unrelated Blueprint is never overwritten.
+
+The model importer requires its three destination folders to be empty by
+default, including material assets. It relies on the current import task's save
+flag and never recursively saves unrelated directory contents. Both importers
+require mesh results from the current task; empty/incorrect results cannot be
+reported as success by loading an old asset. Import/build errors are raised;
+an unsuccessful run may leave partially generated assets in
 the selected output folders, so retain logs before retrying.
 
 ## Verification and evidence boundary
@@ -200,5 +212,8 @@ new GLB and three OBJ meshes were imported; the gallery was saved/reopened with
 Pawn was created in a separate successful Editor process. This does not validate
 a build of the upstream plugin. The first combined NullRHI run crashed during
 shutdown after writing its static asset reports; keep those step reports separate
-from the host process exit status. No third-party binary or asset is distributed
+from the host process exit status. The final full-Editor rerun imported a new
+gallery/model asset root and exited normally. A separate Blueprint roundtrip
+checked default overwrite refusal, explicit update and reload with exactly three
+unique `NoCollision` visual components. No third-party binary or asset is distributed
 by this contribution, and no rendering/flight claim follows from these checks.

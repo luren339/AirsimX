@@ -86,6 +86,36 @@ class GalleryLayoutTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     build_layout(cfg)
 
+    def test_fixture_spacing_that_quantizes_to_zero_is_rejected_without_generating(self):
+        cfg = self.config()
+        cfg['fixture_spacing_m'].update(cable_support_min=0.0001, cable_support_max=0.0002)
+        with self.assertRaises(ValueError):
+            build_layout(cfg)
+
+    def test_branches_cannot_reuse_corridor_exits_branch_exits_or_ids(self):
+        cases = (
+            [{'id': 'BlockedExit', 'from_node': 'J11', 'direction': 'east', 'length_m': 10}],
+            [{'id': 'First', 'from_node': 'J00', 'direction': 'west', 'length_m': 10},
+             {'id': 'Second', 'from_node': 'J00', 'direction': 'west', 'length_m': 10}],
+            [{'id': 'Same', 'from_node': 'J00', 'direction': 'west', 'length_m': 10},
+             {'id': 'Same', 'from_node': 'J00', 'direction': 'south', 'length_m': 10}],
+            [{'id': 'H00', 'from_node': 'J00', 'direction': 'west', 'length_m': 10}],
+        )
+        for branches in cases:
+            with self.subTest(branches=branches):
+                cfg = self.config()
+                cfg['branches'] = branches
+                with self.assertRaises(ValueError):
+                    build_layout(cfg)
+
+    def test_junction_must_be_strictly_wider_than_corridors_and_branches(self):
+        for changes in ({'junction_width': 4}, {'branch_width': 5}, {'branch_width': 6}):
+            with self.subTest(changes=changes):
+                cfg = self.config()
+                cfg['dimensions_m'].update(changes)
+                with self.assertRaises(ValueError):
+                    build_layout(cfg)
+
 
 if __name__ == '__main__':
     unittest.main()

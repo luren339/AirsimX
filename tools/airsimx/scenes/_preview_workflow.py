@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 
@@ -80,3 +81,37 @@ def collision_counts(editor, mesh):
     if simple < 0 or convex < 0:
         raise RuntimeError(f'could not query mesh collisions: simple={simple}, convex={convex}')
     return simple, convex
+
+
+def actor_transform(actor):
+    location = actor.get_actor_location()
+    rotation = actor.get_actor_rotation()
+    scale = actor.get_actor_scale3d()
+    return {'actor_location_cm': [float(location.x), float(location.y), float(location.z)],
+            'actor_rotation_rpy_deg': [float(rotation.roll), float(rotation.pitch), float(rotation.yaw)],
+            'actor_scale': [float(scale.x), float(scale.y), float(scale.z)]}
+
+
+def _close_vector(actual, expected, tolerance):
+    return (len(actual) == len(expected) == 3
+            and all(math.isfinite(a) and math.isfinite(b) and abs(a - b) <= tolerance
+                    for a, b in zip(actual, expected)))
+
+
+def validate_scene_observation(build, geometry, observation):
+    lower, upper = geometry['bounds_m']['min'], geometry['bounds_m']['max']
+    ue_lower = metadata_to_ue_cm([lower[0], upper[1], lower[2]])
+    ue_upper = metadata_to_ue_cm([upper[0], lower[1], upper[2]])
+    expected = {'actor_bounds_origin_cm': [(a + b) / 2 for a, b in zip(ue_lower, ue_upper)],
+                'actor_bounds_extent_cm': [(b - a) / 2 for a, b in zip(ue_lower, ue_upper)]}
+    for field, values in expected.items():
+        if not _close_vector(build[field], values, 0.1) or not _close_vector(observation[field], values, 0.1):
+            raise RuntimeError(f'{field} does not match the geometry manifest (0.1 cm tolerance)')
+    if observation['static_mesh_asset'] != build['static_mesh_asset']:
+        raise RuntimeError('reopened actor references a different StaticMesh')
+    if (observation['static_mesh_material_count'] != build['static_mesh_material_count']
+            or observation['static_mesh_material_count'] != len(geometry['material_names'])):
+        raise RuntimeError('reopened mesh material count does not match the build/manifest')
+    for field, tolerance in (('actor_location_cm', 0.1), ('actor_rotation_rpy_deg', 1e-4), ('actor_scale', 1e-6)):
+        if not _close_vector(observation[field], build[field], tolerance):
+            raise RuntimeError(f'reopened actor transform changed: {field}')

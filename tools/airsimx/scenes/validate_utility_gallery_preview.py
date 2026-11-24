@@ -11,7 +11,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _preview_workflow import (DEFAULT_MAP, DEFAULT_OUTPUT, check_project_dir,
                                hash_existing_maps, map_file, write_report,
-                               collision_counts, static_mesh_editor)
+                               collision_counts, static_mesh_editor, actor_transform,
+                               read_geometry, validate_scene_observation)
 
 unreal = None
 
@@ -24,6 +25,9 @@ def validation_plan(args) -> dict:
         raise ValueError("validation requires an actual UE build report, not a dry-run plan")
     if build["map_asset"] != args.map_asset:
         raise ValueError("build report points to a different map")
+    geometry = read_geometry(build['glb_source'], build['geometry_metadata'])
+    if build['glb_sha256'] != geometry['glb_sha256']:
+        raise ValueError('build report does not match the GLB/geometry manifest')
     target = map_file(args.project_dir, args.map_asset)
     if not target.is_file():
         raise FileNotFoundError(f"saved preview map missing: {target}")
@@ -43,6 +47,7 @@ def run_validation(args) -> dict:
     if not args.build_report.is_file():
         raise FileNotFoundError(f"builder report missing: {args.build_report}")
     build = json.loads(args.build_report.read_text(encoding="utf-8"))
+    geometry = read_geometry(build['glb_source'], build['geometry_metadata'])
     if build["map_asset"] != args.map_asset:
         raise RuntimeError(f"build report points to the wrong map: {build['map_asset']}")
     if not unreal.EditorLevelLibrary.load_level(args.map_asset):
@@ -65,8 +70,6 @@ def run_validation(args) -> dict:
         raise RuntimeError("gallery structure actor lost its StaticMesh after reopen")
     origin, extent = structure.get_actor_bounds(False)
     extent_cm = [float(extent.x), float(extent.y), float(extent.z)]
-    if extent_cm[0] < 4000.0 or extent_cm[1] < 2500.0 or not 150.0 <= extent_cm[2] <= 300.0:
-        raise RuntimeError(f"gallery bounds do not match a horizontal 3D utility corridor: {extent_cm}")
     body_setup = mesh.get_editor_property("body_setup")
     trace_flag = body_setup.get_editor_property("collision_trace_flag")
     trace_flag_text = str(trace_flag)
@@ -77,8 +80,11 @@ def run_validation(args) -> dict:
         raise RuntimeError(f"gallery mesh has unexpected collision mode: {trace_flag_text}")
     if "QUERY_AND_PHYSICS" not in collision_enabled:
         raise RuntimeError(f"gallery actor collision is not enabled for scene queries: {collision_enabled}")
-    if material_count < 8:
-        raise RuntimeError(f"gallery mesh lost imported material groups: {material_count}")
+    observation = {'static_mesh_asset': mesh.get_path_name(),
+                   'static_mesh_material_count': material_count,
+                   'actor_bounds_origin_cm': [float(origin.x), float(origin.y), float(origin.z)],
+                   'actor_bounds_extent_cm': extent_cm, **actor_transform(structure)}
+    validate_scene_observation(build, geometry, observation)
     simple, convex = collision_counts(static_mesh_editor(unreal), mesh)
     if simple != 0 or convex != 0:
         raise RuntimeError(f"simple/convex hulls reappeared after reopen: {simple}/{convex}")
@@ -99,6 +105,7 @@ def run_validation(args) -> dict:
         "player_start_count": len(player_starts),
         "actor_bounds_origin_cm": [float(origin.x), float(origin.y), float(origin.z)],
         "actor_bounds_extent_cm": extent_cm,
+        **actor_transform(structure),
         "static_mesh_asset": mesh.get_path_name(),
         "static_mesh_material_count": material_count,
         "collision_trace_flag": trace_flag_text,

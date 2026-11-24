@@ -1,6 +1,7 @@
 """Exercise preview inputs, protected-map hashes and offline CLI plans."""
 
 import hashlib
+import copy
 import json
 from pathlib import Path
 import subprocess
@@ -11,6 +12,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from _generated_geometry_test_utils import TOOLS
+from _ue_asset_test_utils import import_engine
 
 
 class PreviewWorkflowTests(unittest.TestCase):
@@ -30,6 +32,8 @@ class PreviewWorkflowTests(unittest.TestCase):
             'glb_sha256': hashlib.sha256(self.glb.read_bytes()).hexdigest(),
             'layout_summary': {'cycle_rank': 4}, 'clearance': {'violations': []},
             'lights': [], 'player_start_m': [-28, -22, 1.25],
+            'bounds_m': {'min': [-5, -7, -0.25], 'max': [9, 11, 3.85]},
+            'material_names': ['Concrete', 'Steel'],
         }
         self.geometry.write_text(json.dumps(self.geometry_data))
         self.report = self.root / 'report.json'
@@ -96,6 +100,8 @@ class PreviewWorkflowTests(unittest.TestCase):
         build.write_text(json.dumps({
             'status': 'utility_gallery_preview_level_saved',
             'map_asset': '/Game/Independent/Maps/Gallery',
+            'glb_source': str(self.glb), 'geometry_metadata': str(self.geometry),
+            'glb_sha256': self.geometry_data['glb_sha256'],
             'existing_map_sha256_before': {'Content/Existing/Original.umap':
                                           hashlib.sha256(self.map_file.read_bytes()).hexdigest()},
         }))
@@ -176,6 +182,66 @@ class CollisionConfigurationTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         self.builder.configure_mesh_collision('/Game/Generated/Mesh', mesh)
                 self.assertFalse(mesh.saved)
+
+
+class GalleryImportResultTests(unittest.TestCase):
+    def test_empty_task_result_never_falls_back_to_an_existing_directory_mesh(self):
+        sys.path.insert(0, str(TOOLS / 'scenes'))
+        import build_utility_gallery_preview as builder
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            glb, metadata = root / 'scene.glb', root / 'geometry.json'
+            glb.write_bytes(b'glTF')
+            metadata.write_text('{}')
+            args = SimpleNamespace(glb=glb, metadata=metadata,
+                                   asset_root='/Game/Old', replace_existing=True)
+            api, state = import_engine([])
+            with mock.patch.object(builder, 'unreal', api):
+                with self.assertRaises(RuntimeError):
+                    builder.import_gallery_mesh(args)
+            self.assertEqual(state.loads, [])
+
+
+class SceneReopenContractTests(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, str(TOOLS / 'scenes'))
+        import _preview_workflow as workflow
+        self.workflow = workflow
+        self.geometry = {'bounds_m': {'min': [-5, -7, -0.25], 'max': [9, 11, 3.85]},
+                         'material_names': ['Concrete', 'Steel']}
+        self.build = {'static_mesh_asset': '/Game/Generated/Small.Small',
+                      'static_mesh_material_count': 2,
+                      'actor_bounds_origin_cm': [200, -200, 180],
+                      'actor_bounds_extent_cm': [700, 900, 205],
+                      'actor_location_cm': [0, 0, 0], 'actor_rotation_rpy_deg': [0, 0, 0],
+                      'actor_scale': [1, 1, 1]}
+
+    def test_compact_scene_is_checked_against_transformed_manifest_bounds(self):
+        self.workflow.validate_scene_observation(self.build, self.geometry, copy.deepcopy(self.build))
+
+    def test_reopen_rejects_other_assets_dimensions_materials_and_actor_transforms(self):
+        changes = {'static_mesh_asset': '/Game/Other/Large.Large',
+                   'static_mesh_material_count': 3,
+                   'actor_bounds_origin_cm': [201, -200, 180],
+                   'actor_bounds_extent_cm': [4325, 2625, 205],
+                   'actor_location_cm': [1, 0, 0], 'actor_rotation_rpy_deg': [0, 0, 1],
+                   'actor_scale': [1.1, 1, 1]}
+        for field, value in changes.items():
+            with self.subTest(field=field):
+                observation = copy.deepcopy(self.build)
+                observation[field] = value
+                with self.assertRaises(RuntimeError):
+                    self.workflow.validate_scene_observation(self.build, self.geometry, observation)
+
+    def test_build_bounds_must_also_match_the_manifest(self):
+        self.build['actor_bounds_extent_cm'] = [4325, 2625, 205]
+        with self.assertRaises(RuntimeError):
+            self.workflow.validate_scene_observation(self.build, self.geometry, copy.deepcopy(self.build))
+
+    def test_submillimeter_import_rounding_is_allowed(self):
+        observation = copy.deepcopy(self.build)
+        observation['actor_bounds_origin_cm'][0] += 0.01
+        self.workflow.validate_scene_observation(self.build, self.geometry, observation)
 
 
 if __name__ == '__main__':

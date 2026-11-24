@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _preview_workflow import (DEFAULT_ASSETS, DEFAULT_MAP, DEFAULT_OUTPUT,
                                check_project_dir, game_path, hash_existing_maps,
                                map_file, metadata_to_ue_cm, read_geometry, write_report,
-                               collision_counts, static_mesh_editor)
+                               collision_counts, static_mesh_editor, actor_transform)
 
 unreal = None  # Loaded only after explicit CLI input checks, never on import.
 LIGHT_INTENSITY = 450.0
@@ -41,17 +41,8 @@ def import_gallery_mesh(args):
         if isinstance(asset, unreal.StaticMesh):
             static_meshes.append((path, asset))
     if not static_meshes:
-        registry = unreal.AssetRegistryHelpers.get_asset_registry()
-        for asset_data in registry.get_assets_by_path(args.asset_root, recursive=True):
-            asset = asset_data.get_asset()
-            if isinstance(asset, unreal.StaticMesh):
-                static_meshes.append((asset.get_path_name(), asset))
-    if not static_meshes:
         raise RuntimeError(f"GLB import returned no StaticMesh assets: {imported_paths}")
-    preferred = [item for item in static_meshes if "UtilityGalleryPreview" in item[0] or "utility_gallery_preview" in item[0].lower()]
-    if len(preferred) == 1:
-        mesh_path, mesh = preferred[0]
-    elif len(static_meshes) == 1:
+    if len(static_meshes) == 1:
         mesh_path, mesh = static_meshes[0]
     else:
         raise RuntimeError(f"expected one gallery StaticMesh, found: {[path for path, _ in static_meshes]}")
@@ -222,6 +213,7 @@ def run_build(args, plan) -> dict:
         "actor_label": structure.get_actor_label(),
         "actor_bounds_origin_cm": [float(origin.x), float(origin.y), float(origin.z)],
         "actor_bounds_extent_cm": [float(extent.x), float(extent.y), float(extent.z)],
+        **actor_transform(structure),
         "collision": collision, "point_light_count": light_count,
         "light_coordinate_transform": "metadata meters (x,y,z) -> UE centimeters (100x,-100y,100z)",
         "lighting": {"point_light_lumens": args.light_intensity,
