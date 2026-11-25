@@ -1,6 +1,13 @@
 """Exercise the CMake filesystem link probe with real C++17 link attempts.
 
 Run: python -m unittest tools.airsimx.tests.test_cmake_filesystem_probe -v
+
+To verify the legacy libc++fs path with an actual older libc++, run for
+example::
+
+    AIRSIM_TEST_CXX=/usr/bin/clang++-8 \
+    AIRSIM_TEST_CXX_FLAGS=-stdlib=libc++ \
+        python3 -m unittest tools.airsimx.tests.test_cmake_filesystem_probe -v
 """
 
 from __future__ import annotations
@@ -103,12 +110,28 @@ class CMakeFilesystemProbeTests(unittest.TestCase):
             )
 
     def test_uses_cxxfs_fallback_when_direct_link_is_unavailable(self) -> None:
-        archiver = shutil.which("ar")
-        if not archiver:
-            self.skipTest("ar is required to provide the isolated fallback library")
-
         with tempfile.TemporaryDirectory(prefix="airsim-fs-fallback-") as temporary:
             temporary_path = Path(temporary)
+
+            # Prefer the real active toolchain. On libc++ 8 this builds and
+            # runs the directory_iterator executable against the actual
+            # separate libc++fs implementation, exercising the production
+            # fallback without substituting a test library.
+            selected = self._configure_and_build(
+                temporary_path / "toolchain-build", [])
+            if selected == "c++fs":
+                self.assertEqual(selected, "c++fs")
+                return
+
+            # Newer libc++ versions provide filesystem directly. Only there
+            # use a small isolated archive to deterministically exercise the
+            # fallback branch; this does not stand in for a legacy ABI test.
+            archiver = shutil.which("ar")
+            if not archiver:
+                self.skipTest(
+                    "ar is required to exercise the fallback branch on a "
+                    "toolchain that links filesystem directly")
+
             library_dir = temporary_path / "legacy-lib"
             library_dir.mkdir()
             source = temporary_path / "fallback_marker.cpp"
@@ -121,9 +144,6 @@ class CMakeFilesystemProbeTests(unittest.TestCase):
                 [archiver, "rcs", str(library_dir / "libc++fs.a"), str(object_file)],
                 check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
-            # The synthetic archive only exercises CMake's fallback branch
-            # and link ordering on a modern toolchain. It is not an old-libc++
-            # ABI/runtime build; that requires an actual legacy SDK.
             linker_flags = os.environ.get("AIRSIM_TEST_EXE_LINKER_FLAGS", "").strip()
             linker_flags = f"{linker_flags} -L{library_dir}".strip()
 
