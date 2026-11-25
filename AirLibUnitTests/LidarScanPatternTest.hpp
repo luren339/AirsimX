@@ -21,6 +21,11 @@ public:
             testAssert(LivoxScanPattern::uniformSampleIndex(i, 5, 9) == i * 2, "Uniform sampling must span the table");
         testAssert(LivoxScanPattern::uniformSampleIndex(0, 1, 9) == 0, "One sample starts at the first direction");
         testAssert(LivoxScanPattern::uniformSampleIndex(4, 5, 1) == 0, "One direction can repeat");
+        std::size_t repeated_direction_counts[] = { 0, 0 };
+        for (std::size_t i = 0; i < 100; ++i)
+            ++repeated_direction_counts[LivoxScanPattern::uniformSampleIndex(i, 100, 2)];
+        testAssert(repeated_direction_counts[0] == 50 && repeated_direction_counts[1] == 50,
+                   "Oversampling two directions must distribute 100 rays evenly");
         expectThrow<std::invalid_argument>([] { LivoxScanPattern::uniformSampleIndex(0, 0, 1); });
         expectThrow<std::invalid_argument>([] { LivoxScanPattern::uniformSampleIndex(0, 1, 0); });
         expectThrow<std::out_of_range>([] { LivoxScanPattern::uniformSampleIndex(2, 2, 3); });
@@ -54,6 +59,7 @@ public:
         testAssert(pattern.at(0).azimuth_deg == 270 && pattern.at(0).elevation_deg == 30, "Angle normalization and zenith conversion");
         testAssert(pattern.at(1).azimuth_deg == 90 && pattern.at(1).elevation_deg == 0, "Azimuth wrapping");
         testAssert(pattern.at(2).azimuth_deg == pattern.at(0).azimuth_deg, "Sequential wrap");
+        testSequentialSamplingState();
         const char* invalid[] = {
             "Time,Zenith,Azimuth\n0,90,0\n", "Time,Azimuth,Zenith\n", "Time,Azimuth,Zenith\n0,0,90,\n",
             "Time,Azimuth,Zenith\n0,0,90,1\n", "Time,Azimuth,Zenith\n0,0\n",
@@ -69,6 +75,36 @@ public:
         }
     }
 private:
+    void testSequentialSamplingState()
+    {
+        LivoxScanPatternState state;
+        std::size_t first_second_rays = 0;
+        for (int frame = 0; frame < 10; ++frame)
+            first_second_rays += state.nextSequentialRayCount(2, 0.1, 100000);
+        testAssert(first_second_rays == 2,
+                   "At 10 Hz, a 2-point/s scan must attempt two rays in one second");
+
+        testAssert(state.nextSequentialIndex(12) == 0, "Sequential sampling starts at row 0");
+        for (int i = 0; i < 4; ++i)
+            state.nextSequentialIndex(12);
+        testAssert(state.nextSequentialIndex(12) == 5, "Sequential sampling advances through rows");
+        state.reset();
+        testAssert(state.nextSequentialIndex(12) == 0,
+                   "Reset must restart the scan direction table at row 0");
+
+        // Leave fractional work pending, reset, and make sure it is not
+        // carried into the new simulation epoch.
+        state.nextSequentialRayCount(2, 0.1, 100000);
+        state.reset();
+        std::size_t post_reset_rays = 0;
+        for (int frame = 0; frame < 4; ++frame)
+            post_reset_rays += state.nextSequentialRayCount(2, 0.1, 100000);
+        testAssert(post_reset_rays == 0,
+                   "Reset must clear the fractional ray budget from the old epoch");
+        testAssert(state.nextSequentialRayCount(1000000, 1.0, 100000) == 100000,
+                   "Sequential ray attempts must retain the per-frame safety cap");
+    }
+
     struct Fixture {
         std::filesystem::path path = std::filesystem::temp_directory_path() /
             ("airsimx-lidar-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));

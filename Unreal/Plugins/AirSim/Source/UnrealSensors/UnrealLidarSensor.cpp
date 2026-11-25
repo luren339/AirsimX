@@ -59,6 +59,14 @@ void UnrealLidarSensor::createLasers()
     }
 }
 
+void UnrealLidarSensor::resetImplementation()
+{
+    // Reset ordered sampling before the base reset publishes its first output.
+    scan_pattern_state_.reset();
+    current_horizontal_angle_ = 0.0f;
+    msr::airlib::LidarSimple::resetImplementation();
+}
+
 // returns a point-cloud for the tick
 void UnrealLidarSensor::getPointCloud(const msr::airlib::Pose& lidar_pose, const msr::airlib::Pose& vehicle_pose,
                                       const msr::airlib::TTimeDelta delta_time, msr::airlib::vector<msr::airlib::real_T>& point_cloud, msr::airlib::vector<int>& segmentation_cloud)
@@ -71,13 +79,18 @@ void UnrealLidarSensor::getPointCloud(const msr::airlib::Pose& lidar_pose, const
 
     // cap the points to scan via ray-tracing; this is currently needed for car/Unreal tick scenarios
     // since SensorBase mechanism uses the elapsed clock time instead of the tick delta-time.
-    constexpr float MAX_POINTS_IN_SCAN = 1e+5f;
+    constexpr uint32 MAX_POINTS_IN_SCAN = 100000;
     uint32 total_points_to_scan = FMath::RoundHalfFromZero(params.points_per_second * delta_time);
     if (scan_pattern_mode_ == LivoxScanSamplingMode::FullFovUniform) {
         const std::size_t fixed_sample_count = LivoxScanPattern::sampleCountForFullFov(
             params.points_per_second, static_cast<double>(params.update_frequency));
         total_points_to_scan = static_cast<uint32>(
             std::min<std::size_t>(fixed_sample_count, static_cast<std::size_t>(MAX_POINTS_IN_SCAN)));
+    }
+    else if (use_scan_pattern_) {
+        total_points_to_scan = static_cast<uint32>(scan_pattern_state_.nextSequentialRayCount(
+            params.points_per_second, static_cast<double>(delta_time),
+            static_cast<std::size_t>(MAX_POINTS_IN_SCAN)));
     }
     if (total_points_to_scan > MAX_POINTS_IN_SCAN) {
         total_points_to_scan = MAX_POINTS_IN_SCAN;
@@ -91,7 +104,7 @@ void UnrealLidarSensor::getPointCloud(const msr::airlib::Pose& lidar_pose, const
         for (uint32 i = 0; i < total_points_to_scan; ++i) {
             const std::size_t pattern_index = scan_pattern_mode_ == LivoxScanSamplingMode::FullFovUniform
                                                   ? LivoxScanPattern::uniformSampleIndex(i, total_points_to_scan, scan_pattern_.size())
-                                                  : scan_pattern_index_++;
+                                                  : scan_pattern_state_.nextSequentialIndex(scan_pattern_.size());
             const LivoxScanAngle& sample = scan_pattern_.at(pattern_index);
 
             // Livox CSV azimuth is positive to the left in a right-handed sensor

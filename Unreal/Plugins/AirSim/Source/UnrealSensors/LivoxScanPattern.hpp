@@ -64,6 +64,8 @@ public:
             throw std::out_of_range("sample slot must be less than sample_count");
         if (sample_count == 1 || pattern_size == 1)
             return 0;
+        if (sample_count >= pattern_size)
+            return slot % pattern_size;
 
         if (slot > 0 && pattern_size - 1 > std::numeric_limits<std::uint64_t>::max() / slot)
             throw std::overflow_error("scan pattern sampling index exceeds uint64 range");
@@ -187,4 +189,58 @@ private:
     }
 
     std::vector<LivoxScanAngle> angles_;
+};
+
+// Runtime state for ordered sampling. Kept independent of Unreal so ray-budget
+// accumulation and reset behavior can be verified by the native test target.
+class LivoxScanPatternState
+{
+public:
+    void reset()
+    {
+        sequential_index_ = 0;
+        fractional_ray_budget_ = 0.0L;
+    }
+
+    std::size_t nextSequentialRayCount(std::uint32_t points_per_second,
+                                       double delta_time,
+                                       std::size_t max_points_per_frame)
+    {
+        if (!std::isfinite(delta_time) || delta_time < 0.0)
+            throw std::invalid_argument("scan delta_time must be finite and non-negative");
+
+        const long double requested = static_cast<long double>(points_per_second) *
+                                      static_cast<long double>(delta_time) +
+                                      fractional_ray_budget_;
+        if (!std::isfinite(requested))
+            throw std::overflow_error("sequential scan ray budget exceeds long double range");
+
+        // Tick durations such as 0.1 s are not exact in binary. A tiny
+        // tolerance prevents ten 0.2-ray frames from yielding only one ray.
+        constexpr long double integer_tolerance = 1e-12L;
+        const long double whole_rays = std::floor(requested + integer_tolerance);
+        fractional_ray_budget_ = requested - whole_rays;
+        if (fractional_ray_budget_ < 0.0L &&
+            fractional_ray_budget_ > -integer_tolerance)
+            fractional_ray_budget_ = 0.0L;
+
+        if (whole_rays <= 0.0L || max_points_per_frame == 0)
+            return 0;
+        if (whole_rays >= static_cast<long double>(max_points_per_frame))
+            return max_points_per_frame;
+        return static_cast<std::size_t>(whole_rays);
+    }
+
+    std::size_t nextSequentialIndex(std::size_t pattern_size)
+    {
+        if (pattern_size == 0)
+            throw std::invalid_argument("sequential scan pattern must not be empty");
+        const std::size_t index = sequential_index_ % pattern_size;
+        sequential_index_ = index + 1 == pattern_size ? 0 : index + 1;
+        return index;
+    }
+
+private:
+    std::size_t sequential_index_ = 0;
+    long double fractional_ray_budget_ = 0.0L;
 };

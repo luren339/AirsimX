@@ -22,6 +22,7 @@ public:
                       AActor* actor, const NedTransform* ned_transform);
 
 protected:
+    virtual void resetImplementation() override;
     virtual void getPointCloud(const msr::airlib::Pose& lidar_pose, const msr::airlib::Pose& vehicle_pose,
                                msr::airlib::TTimeDelta delta_time, msr::airlib::vector<msr::airlib::real_T>& point_cloud, msr::airlib::vector<int>& segmentation_cloud) override;
 
@@ -41,7 +42,7 @@ private:
     msr::airlib::vector<msr::airlib::real_T> laser_angles_;
     float current_horizontal_angle_ = 0.0f;
     LivoxScanPattern scan_pattern_;
-    std::size_t scan_pattern_index_ = 0;
+    LivoxScanPatternState scan_pattern_state_;
     bool use_scan_pattern_ = false;
     LivoxScanSamplingMode scan_pattern_mode_ = LivoxScanSamplingMode::Sequential;
 };
