@@ -3,6 +3,7 @@
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 
@@ -21,6 +22,10 @@ def map_file(project_dir, map_asset):
     return Path(project_dir).resolve() / 'Content' / (game_path(map_asset)[6:] + '.umap')
 
 
+def project_descriptor_files(project_dir):
+    return tuple(Path(project_dir).resolve().glob('*.uproject'))
+
+
 def sha256(path):
     digest = hashlib.sha256()
     with Path(path).open('rb') as stream:
@@ -35,6 +40,82 @@ def hash_existing_maps(project_dir, map_asset):
     return {path.relative_to(project_dir).as_posix(): sha256(path)
             for path in sorted((project_dir / 'Content').rglob('*.umap'))
             if path.is_file() and path.resolve() != target}
+
+
+def _unreal_object_paths(obj):
+    paths = set()
+    for getter_name in ('get_path_name', 'get_name'):
+        getter = getattr(obj, getter_name, None)
+        if getter is not None:
+            try:
+                value = getter()
+            except Exception:
+                continue
+            if value:
+                paths.add(str(value))
+    return paths
+
+
+def assert_current_level_saved(unreal):
+    """Refuse a level switch while the current persistent map has edits."""
+    level_library = unreal.EditorLevelLibrary
+    world = level_library.get_editor_world()
+    if world is None:
+        raise RuntimeError('cannot inspect the current editor world; refusing to switch levels')
+    persistent_level = world.get_persistent_level()
+    if persistent_level is None:
+        raise RuntimeError('cannot inspect the current persistent level; refusing to switch levels')
+    current_package = persistent_level.get_outermost()
+    if current_package is None:
+        raise RuntimeError('cannot inspect the current map package; refusing to switch levels')
+    current_paths = _unreal_object_paths(current_package)
+    if not current_paths:
+        raise RuntimeError('cannot identify the current map package; refusing to switch levels')
+    try:
+        dirty_packages = unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages()
+    except Exception as error:
+        raise RuntimeError('cannot query dirty map packages; refusing to switch levels') from error
+    for package in dirty_packages:
+        if current_paths & _unreal_object_paths(package):
+            raise RuntimeError(
+                f'current persistent level {sorted(current_paths)[0]} has unsaved changes; '
+                'save it in Unreal Editor before building or validating another level')
+
+
+def actors_in_map(actors, map_asset):
+    """Select actors whose owning level package exactly matches a /Game map."""
+    target = game_path(map_asset)
+    selected = []
+    for actor in actors:
+        try:
+            level = actor.get_level()
+            package = level.get_outermost() if level is not None else None
+            package_paths = _unreal_object_paths(package) if package is not None else set()
+        except Exception:
+            continue
+        if target in package_paths:
+            selected.append(actor)
+    return selected
+
+
+def validate_report_destination(path, input_paths=()):
+    """Reject reports that alias source inputs or Unreal asset packages."""
+    target = Path(path).expanduser().resolve(strict=False)
+    if target.suffix.lower() in {'.umap', '.uasset'}:
+        raise ValueError(f'report path must not target an Unreal asset: {target}')
+    for source in input_paths:
+        if source is None:
+            continue
+        source_path = Path(source).expanduser().resolve(strict=False)
+        same_file = target == source_path
+        if not same_file and target.exists() and source_path.exists():
+            try:
+                same_file = os.path.samefile(target, source_path)
+            except OSError:
+                same_file = False
+        if same_file:
+            raise ValueError(f'report path aliases an input file and would overwrite it: {target}')
+    return target
 
 
 def read_geometry(glb, metadata):
@@ -56,8 +137,8 @@ def check_project_dir(project_dir, unreal):
         raise RuntimeError(f'active UE project {active} differs from --project-dir {project_dir}')
 
 
-def write_report(path, report):
-    path = Path(path)
+def write_report(path, report, input_paths=()):
+    path = validate_report_destination(path, input_paths)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + '\n', encoding='utf-8')
 

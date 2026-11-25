@@ -593,6 +593,8 @@ def _add_cable_tray_run(
     component="cable_tray",
     cap_start=True,
     cap_end=True,
+    envelope=None,
+    envelope_width=None,
 ):
     """Build an open steel ladder tray with visible individual cable bundles."""
     length = along1 - along0
@@ -600,12 +602,14 @@ def _add_cable_tray_run(
     rail_offset = tray_width / 2.0 - 0.025
     for side in (-1.0, 1.0):
         _box_local(scene, start, yaw, center_s, lateral + side * rail_offset, z,
-                   (length, 0.035, 0.045), "Coated_Steel", component)
+                   (length, 0.035, 0.045), "Coated_Steel", component,
+                   envelope, envelope_width)
     rung_spacing = 0.42
     rung = 0.10
     while rung < length - 0.04:
         _box_local(scene, start, yaw, along0 + rung, lateral, z - 0.025,
-                   (0.035, tray_width - 0.03, 0.025), "Coated_Steel", component)
+                   (0.035, tray_width - 0.03, 0.025), "Coated_Steel", component,
+                   envelope, envelope_width)
         rung += rung_spacing
     cable_count = 3 if tray_width >= 0.5 else 2
     for index in range(cable_count):
@@ -620,6 +624,8 @@ def _add_cable_tray_run(
             z + 0.025,
             0.027,
             "Cable_Jacket",
+            envelope,
+            envelope_width,
             fixture_id=f"{component}_bundle",
             cap_start=cap_start,
             cap_end=cap_end,
@@ -899,6 +905,8 @@ def _add_corridor_services(scene: _SceneMesh, path_id: str, start, end, width, h
         tray_width,
         cap_start=False,
         cap_end=False,
+        envelope=envelope,
+        envelope_width=width,
     )
     support_spacing = edge_spacing["cable_support_spacing_m"]
     support_positions = []

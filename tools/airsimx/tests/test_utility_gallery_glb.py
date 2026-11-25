@@ -131,6 +131,22 @@ class GalleryGeometryTests(unittest.TestCase):
 
 
 class CorridorTerminationTests(unittest.TestCase):
+    def test_cable_tray_rails_and_rungs_are_checked_against_the_flight_envelope(self):
+        sys.path.insert(0, str(TOOLS / 'scenes'))
+        from generate_utility_gallery_glb import _SceneMesh, _add_corridor_services
+        scene = _SceneMesh()
+        _add_corridor_services(
+            scene, 'NarrowBranch_Test', (0.0, 0.0), (10.0, 0.0), 3.0, 3.3,
+            {'width': 2.2, 'height': 2.2, 'center_height': 1.8},
+            {'structural_joint_spacing_m': 5.4, 'cable_support_spacing_m': 2.7,
+             'light_spacing_m': 7.0})
+        tray_records = [record for record in scene.clearance_records
+                        if record['fixture'].startswith('cable_tray_')]
+        tray_violations = [violation for violation in scene.clearance_violations
+                           if violation['fixture'].startswith('cable_tray_')]
+        self.assertGreaterEqual(len(tray_records), 25)
+        self.assertGreaterEqual(len(tray_violations), 2)
+
     def test_dead_end_pipes_terminate_inside_the_25cm_bulkhead(self):
         sys.path.insert(0, str(TOOLS / 'scenes'))
         from generate_utility_gallery_glb import _SceneMesh, _add_corridor_services

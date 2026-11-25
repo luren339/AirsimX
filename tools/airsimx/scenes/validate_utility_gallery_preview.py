@@ -12,12 +12,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _preview_workflow import (DEFAULT_MAP, DEFAULT_OUTPUT, check_project_dir,
                                hash_existing_maps, map_file, write_report,
                                collision_counts, static_mesh_editor, actor_transform,
-                               read_geometry, validate_scene_observation)
+                               read_geometry, validate_scene_observation,
+                               assert_current_level_saved, actors_in_map,
+                               project_descriptor_files, validate_report_destination)
 
 unreal = None
 
 
+def _report_input_paths(args, build=None):
+    paths = [args.build_report, map_file(args.project_dir, args.map_asset),
+             *project_descriptor_files(args.project_dir)]
+    if build is not None:
+        paths.extend((build['glb_source'], build['geometry_metadata']))
+    return tuple(paths)
+
+
 def validation_plan(args) -> dict:
+    target = map_file(args.project_dir, args.map_asset)
+    validate_report_destination(args.report, _report_input_paths(args))
     if not args.project_dir.is_dir():
         raise FileNotFoundError(f"UE project directory missing: {args.project_dir}")
     build = json.loads(args.build_report.read_text(encoding="utf-8"))
@@ -25,10 +37,10 @@ def validation_plan(args) -> dict:
         raise ValueError("validation requires an actual UE build report, not a dry-run plan")
     if build["map_asset"] != args.map_asset:
         raise ValueError("build report points to a different map")
+    validate_report_destination(args.report, _report_input_paths(args, build))
     geometry = read_geometry(build['glb_source'], build['geometry_metadata'])
     if build['glb_sha256'] != geometry['glb_sha256']:
         raise ValueError('build report does not match the GLB/geometry manifest')
-    target = map_file(args.project_dir, args.map_asset)
     if not target.is_file():
         raise FileNotFoundError(f"saved preview map missing: {target}")
     current = hash_existing_maps(args.project_dir, args.map_asset)
@@ -50,12 +62,16 @@ def run_validation(args) -> dict:
     geometry = read_geometry(build['glb_source'], build['geometry_metadata'])
     if build["map_asset"] != args.map_asset:
         raise RuntimeError(f"build report points to the wrong map: {build['map_asset']}")
+    target = map_file(args.project_dir, args.map_asset)
+    validate_report_destination(args.report, _report_input_paths(args, build))
+    assert_current_level_saved(unreal)
     if not unreal.EditorLevelLibrary.load_level(args.map_asset):
         raise RuntimeError(f"could not reopen preview map {args.map_asset}")
     actors = list(unreal.EditorLevelLibrary.get_all_level_actors())
-    structures = [actor for actor in actors if actor.get_actor_label() == "UtilityGallery_MainStructure"]
-    lights = [actor for actor in actors if actor.get_actor_label().startswith("UtilityGallery_Light_")]
-    player_starts = [actor for actor in actors if isinstance(actor, unreal.PlayerStart)]
+    target_actors = actors_in_map(actors, args.map_asset)
+    structures = [actor for actor in target_actors if actor.get_actor_label() == "UtilityGallery_MainStructure"]
+    lights = [actor for actor in target_actors if actor.get_actor_label().startswith("UtilityGallery_Light_")]
+    player_starts = [actor for actor in target_actors if isinstance(actor, unreal.PlayerStart)]
     if len(structures) != 1:
         raise RuntimeError(f"expected one gallery structure actor after reopen, found {len(structures)}")
     if len(lights) != build["point_light_count"]:
@@ -131,7 +147,8 @@ def main(argv=None) -> None:
     args = parser.parse_args(argv)
     plan = validation_plan(args)
     report = plan if args.dry_run else run_validation(args)
-    write_report(args.report, report)
+    build = json.loads(args.build_report.read_text(encoding='utf-8'))
+    write_report(args.report, report, _report_input_paths(args, build))
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 

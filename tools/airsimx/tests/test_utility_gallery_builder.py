@@ -19,7 +19,7 @@ class PreviewWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.project = self.root / 'Project With Spaces'
         self.map_file = self.project / 'Content/Existing/Original.umap'
         self.map_file.parent.mkdir(parents=True)
@@ -54,7 +54,8 @@ class PreviewWorkflowTests(unittest.TestCase):
         self.assertEqual(report['status'], 'utility_gallery_preview_planned')
         self.assertEqual(report['map_asset'], '/Game/Independent/Maps/Gallery')
         self.assertEqual(report['asset_root'], '/Game/Independent/Generated')
-        self.assertEqual(report['map_file'], str(self.project / 'Content/Independent/Maps/Gallery.umap'))
+        self.assertEqual(report['map_file'],
+                         str((self.project / 'Content/Independent/Maps/Gallery.umap').resolve()))
         self.assertEqual(report['existing_map_sha256_before'],
                          {'Content/Existing/Original.umap': hashlib.sha256(before).hexdigest()})
         self.assertEqual(self.map_file.read_bytes(), before)
@@ -84,6 +85,24 @@ class PreviewWorkflowTests(unittest.TestCase):
                 result = self.builder(option, value)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(self.report.exists())
+
+    def test_builder_report_cannot_overwrite_unreal_assets_or_inputs(self):
+        protected = []
+        for suffix in ('.umap', '.uasset'):
+            path = self.project / 'Content/Protected' / f'Original{suffix}'
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'protected Unreal asset bytes')
+            protected.append(path)
+        protected.extend((self.glb, self.geometry))
+        project_descriptor = self.project / 'Gallery.uproject'
+        project_descriptor.write_bytes(b'Unreal project descriptor bytes')
+        protected.append(project_descriptor)
+        for path in protected:
+            with self.subTest(path=path):
+                before = path.read_bytes()
+                result = self.builder('--report', str(path))
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(path.read_bytes(), before)
 
     def test_invalid_light_intensity_is_rejected_before_a_plan_is_written(self):
         for intensity in ('0', 'nan'):
@@ -119,6 +138,39 @@ class PreviewWorkflowTests(unittest.TestCase):
         result = subprocess.run(command, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.report.exists())
+
+    def test_validator_report_cannot_overwrite_umap_uasset_or_build_report(self):
+        target = self.project / 'Content/Independent/Maps/Gallery.umap'
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b'preview map bytes')
+        build = self.root / 'build.json'
+        build.write_text(json.dumps({
+            'status': 'utility_gallery_preview_level_saved',
+            'map_asset': '/Game/Independent/Maps/Gallery',
+            'glb_source': str(self.glb), 'geometry_metadata': str(self.geometry),
+            'glb_sha256': self.geometry_data['glb_sha256'],
+            'existing_map_sha256_before': {'Content/Existing/Original.umap':
+                                          hashlib.sha256(self.map_file.read_bytes()).hexdigest()},
+        }))
+        protected = [build, self.glb, self.geometry]
+        project_descriptor = self.project / 'Gallery.uproject'
+        project_descriptor.write_bytes(b'Unreal project descriptor bytes')
+        protected.append(project_descriptor)
+        for suffix in ('.umap', '.uasset'):
+            path = self.project / 'Content/Protected' / f'Original{suffix}'
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'protected Unreal asset bytes')
+            protected.append(path)
+        command = [sys.executable, str(TOOLS / 'scenes/validate_utility_gallery_preview.py'),
+                   '--project-dir', str(self.project), '--build-report', str(build),
+                   '--map-asset', '/Game/Independent/Maps/Gallery', '--dry-run']
+        for path in protected:
+            with self.subTest(path=path):
+                before = path.read_bytes()
+                result = subprocess.run([*command, '--report', str(path)],
+                                        cwd=self.root, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(path.read_bytes(), before)
 
 
 class CollisionConfigurationTests(unittest.TestCase):
@@ -182,6 +234,194 @@ class CollisionConfigurationTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         self.builder.configure_mesh_collision('/Game/Generated/Mesh', mesh)
                 self.assertFalse(mesh.saved)
+
+
+class LevelSafetyTests(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, str(TOOLS / 'scenes'))
+        import _preview_workflow as workflow
+        import build_utility_gallery_preview as builder
+        self.workflow = workflow
+        self.builder = builder
+
+    @staticmethod
+    def fake_actor(package_name, label='UtilityGallery_MainStructure'):
+        package = SimpleNamespace(get_name=lambda: package_name)
+        level = SimpleNamespace(get_outermost=lambda: package)
+        return SimpleNamespace(get_level=lambda: level, get_actor_label=lambda: label)
+
+    def fake_unreal(self, *, dirty=True, exists=True, actors=()):
+        package = SimpleNamespace(get_name=lambda: '/Game/Current/Unsaved')
+        persistent_level = SimpleNamespace(get_outermost=lambda: package)
+        world = SimpleNamespace(get_persistent_level=lambda: persistent_level)
+        level_library = SimpleNamespace(
+            get_editor_world=lambda: world,
+            load_level=mock.Mock(return_value=True),
+            new_level=mock.Mock(return_value=True),
+            get_all_level_actors=lambda: list(actors),
+            destroy_actor=mock.Mock(),
+        )
+        api = SimpleNamespace(
+            EditorLoadingAndSavingUtils=SimpleNamespace(
+                get_dirty_map_packages=lambda: [package] if dirty else []),
+            EditorLevelLibrary=level_library,
+            EditorAssetLibrary=SimpleNamespace(does_asset_exist=lambda _: exists),
+        )
+        return api
+
+    def test_dirty_persistent_level_blocks_both_load_and_create(self):
+        for exists in (True, False):
+            with self.subTest(existing_target=exists):
+                api = self.fake_unreal(dirty=True, exists=exists)
+                with mock.patch.object(self.builder, 'unreal', api):
+                    with self.assertRaisesRegex(RuntimeError, 'unsaved changes'):
+                        self.builder.load_or_create_level(
+                            SimpleNamespace(map_asset='/Game/Generated/Preview'))
+                api.EditorLevelLibrary.load_level.assert_not_called()
+                api.EditorLevelLibrary.new_level.assert_not_called()
+
+    def test_only_actors_owned_by_the_target_level_are_selected(self):
+        target = self.fake_actor('/Game/Generated/Preview')
+        sublevel = self.fake_actor('/Game/Shared/Sublevel')
+        unlabeled = SimpleNamespace(get_level=lambda: None)
+        selected = self.workflow.actors_in_map(
+            [target, sublevel, unlabeled], '/Game/Generated/Preview')
+        self.assertEqual(selected, [target])
+
+    def test_builder_deletes_generated_actors_only_in_target_level(self):
+        target_actor = self.fake_actor('/Game/Generated/Preview')
+        other_level_actor = self.fake_actor('/Game/Shared/Sublevel')
+        api = self.fake_unreal(dirty=False, exists=True,
+                               actors=[target_actor, other_level_actor])
+        with mock.patch.object(self.builder, 'unreal', api):
+            self.builder.load_or_create_level(
+                SimpleNamespace(map_asset='/Game/Generated/Preview'))
+        api.EditorLevelLibrary.destroy_actor.assert_called_once_with(target_actor)
+
+
+class DirtyValidatorLevelTests(unittest.TestCase):
+    def test_unsaved_level_is_rejected_before_validator_loads_the_map(self):
+        sys.path.insert(0, str(TOOLS / 'scenes'))
+        import validate_utility_gallery_preview as validator
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            project = root / 'Project'
+            project.mkdir()
+            build_report = root / 'build.json'
+            build_report.write_text(json.dumps({
+                'map_asset': '/Game/Generated/Preview',
+                'glb_source': str(root / 'scene.glb'),
+                'geometry_metadata': str(root / 'geometry.json'),
+            }))
+            current_package = SimpleNamespace(get_name=lambda: '/Game/Current/Unsaved')
+            persistent_level = SimpleNamespace(get_outermost=lambda: current_package)
+            world = SimpleNamespace(get_persistent_level=lambda: persistent_level)
+            load_level = mock.Mock(return_value=True)
+            api = SimpleNamespace(
+                EditorLevelLibrary=SimpleNamespace(get_editor_world=lambda: world,
+                                                   load_level=load_level),
+                EditorLoadingAndSavingUtils=SimpleNamespace(
+                    get_dirty_map_packages=lambda: [current_package]),
+            )
+            args = SimpleNamespace(project_dir=project, build_report=build_report,
+                                   report=root / 'validation.json',
+                                   map_asset='/Game/Generated/Preview')
+            with mock.patch.object(validator.importlib, 'import_module', return_value=api), \
+                    mock.patch.object(validator, 'check_project_dir'), \
+                    mock.patch.object(validator, 'read_geometry', return_value={'glb_sha256': 'hash'}):
+                with self.assertRaisesRegex(RuntimeError, 'unsaved changes'):
+                    validator.run_validation(args)
+            load_level.assert_not_called()
+
+
+class ValidatorTargetLevelTests(unittest.TestCase):
+    def test_same_labels_in_shared_sublevel_do_not_change_preview_actor_counts(self):
+        sys.path.insert(0, str(TOOLS / 'scenes'))
+        import validate_utility_gallery_preview as validator
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            project = root / 'Project'
+            project.mkdir()
+            build_report = root / 'build.json'
+            build_report.write_text(json.dumps({
+                'map_asset': '/Game/Generated/Preview',
+                'glb_source': str(root / 'scene.glb'),
+                'geometry_metadata': str(root / 'geometry.json'),
+                'point_light_count': 0,
+                'loop_summary': {'cycle_rank': 4},
+                'clearance': {'violations': []},
+                'existing_map_sha256_before': {},
+                'static_mesh_asset': '/Game/Generated/Gallery.Gallery',
+                'static_mesh_material_count': 2,
+                'actor_bounds_origin_cm': [0.0, 0.0, 0.0],
+                'actor_bounds_extent_cm': [1.0, 1.0, 1.0],
+                'actor_location_cm': [0.0, 0.0, 0.0],
+                'actor_rotation_rpy_deg': [0.0, 0.0, 0.0],
+                'actor_scale': [1.0, 1.0, 1.0],
+            }))
+            def actor(label, package_name):
+                package = SimpleNamespace(get_name=lambda: package_name)
+                level = SimpleNamespace(get_outermost=lambda: package)
+                return SimpleNamespace(get_level=lambda: level,
+                                       get_actor_label=lambda: label)
+
+            component = SimpleNamespace(
+                get_editor_property=lambda _: SimpleNamespace(),
+                get_collision_enabled=lambda: 'QUERY_AND_PHYSICS',
+            )
+            body = SimpleNamespace(get_editor_property=lambda _: 'CTF_USE_COMPLEX_AS_SIMPLE')
+            mesh = SimpleNamespace(
+                get_editor_property=lambda key: body if key == 'body_setup' else [1, 2],
+                get_path_name=lambda: '/Game/Generated/Gallery.Gallery',
+            )
+            component.get_editor_property = lambda _: mesh
+            structure = actor('UtilityGallery_MainStructure', '/Game/Generated/Preview')
+            structure.get_component_by_class = lambda _: component
+            structure.get_actor_bounds = lambda _: (
+                SimpleNamespace(x=0.0, y=0.0, z=0.0),
+                SimpleNamespace(x=1.0, y=1.0, z=1.0),
+            )
+            sublevel_structure = actor('UtilityGallery_MainStructure', '/Game/Shared/Sublevel')
+            sublevel_light = actor('UtilityGallery_Light_001', '/Game/Shared/Sublevel')
+            player_start_type = type('PlayerStart', (), {})
+            target_player_start = player_start_type()
+            target_player_start.get_actor_label = lambda: 'UtilityGallery_PlayerStart'
+            target_player_start.get_level = lambda: actor(
+                'owner', '/Game/Generated/Preview').get_level()
+            sublevel_player_start = player_start_type()
+            sublevel_player_start.get_actor_label = lambda: 'UtilityGallery_PlayerStart'
+            sublevel_player_start.get_level = lambda: actor(
+                'owner', '/Game/Shared/Sublevel').get_level()
+            world_package = SimpleNamespace(get_name=lambda: '/Game/Other/Current')
+            level = SimpleNamespace(get_outermost=lambda: world_package)
+            world = SimpleNamespace(get_persistent_level=lambda: level)
+            api = SimpleNamespace(
+                EditorLevelLibrary=SimpleNamespace(
+                    get_editor_world=lambda: world,
+                    load_level=lambda _: True,
+                    get_all_level_actors=lambda: [structure, sublevel_structure, sublevel_light,
+                                                  target_player_start, sublevel_player_start],
+                ),
+                EditorLoadingAndSavingUtils=SimpleNamespace(get_dirty_map_packages=lambda: []),
+                PlayerStart=player_start_type,
+                StaticMeshComponent=type('StaticMeshComponent', (), {}),
+                SystemLibrary=SimpleNamespace(get_engine_version=lambda: 'controlled-boundary'),
+            )
+            args = SimpleNamespace(project_dir=project, build_report=build_report,
+                                   report=root / 'validation.json',
+                                   map_asset='/Game/Generated/Preview')
+            with mock.patch.object(validator.importlib, 'import_module', return_value=api), \
+                    mock.patch.object(validator, 'check_project_dir'), \
+                    mock.patch.object(validator, 'read_geometry', return_value={}), \
+                    mock.patch.object(validator, 'validate_scene_observation'), \
+                    mock.patch.object(validator, 'static_mesh_editor', return_value=object()), \
+                    mock.patch.object(validator, 'collision_counts', return_value=(0, 0)), \
+                    mock.patch.object(validator, 'hash_existing_maps', return_value={}), \
+                    mock.patch.object(validator, 'actor_transform', return_value={}):
+                report = validator.run_validation(args)
+            self.assertEqual(report['gallery_structure_actor_count'], 1)
+            self.assertEqual(report['point_light_count'], 0)
+            self.assertEqual(report['player_start_count'], 1)
 
 
 class GalleryImportResultTests(unittest.TestCase):

@@ -14,12 +14,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _preview_workflow import (DEFAULT_ASSETS, DEFAULT_MAP, DEFAULT_OUTPUT,
                                check_project_dir, game_path, hash_existing_maps,
                                map_file, metadata_to_ue_cm, read_geometry, write_report,
+                               assert_current_level_saved, actors_in_map,
+                               project_descriptor_files, validate_report_destination,
                                collision_counts, static_mesh_editor, actor_transform)
 
 unreal = None  # Loaded only after explicit CLI input checks, never on import.
 LIGHT_INTENSITY = 450.0
 LIGHT_RADIUS_CM = 1200.0
 LIGHT_SOURCE_RADIUS_CM = 135.0
+
+
+def _report_input_paths(args):
+    return (args.glb, args.metadata, map_file(args.project_dir, args.map_asset),
+            *project_descriptor_files(args.project_dir))
 
 
 def import_gallery_mesh(args):
@@ -75,10 +82,11 @@ def configure_mesh_collision(mesh_path: str, mesh) -> dict:
 
 
 def load_or_create_level(args) -> None:
+    assert_current_level_saved(unreal)
     if unreal.EditorAssetLibrary.does_asset_exist(args.map_asset):
         if not unreal.EditorLevelLibrary.load_level(args.map_asset):
             raise RuntimeError(f"could not load existing preview map {args.map_asset}")
-        for actor in unreal.EditorLevelLibrary.get_all_level_actors():
+        for actor in actors_in_map(unreal.EditorLevelLibrary.get_all_level_actors(), args.map_asset):
             if actor.get_actor_label().startswith("UtilityGallery_"):
                 unreal.EditorLevelLibrary.destroy_actor(actor)
     elif not unreal.EditorLevelLibrary.new_level(args.map_asset):
@@ -162,6 +170,7 @@ def spawn_player_start(position_m):
 def build_plan(args) -> dict:
     if not args.project_dir.is_dir():
         raise FileNotFoundError(f"UE project directory missing: {args.project_dir}")
+    validate_report_destination(args.report, _report_input_paths(args))
     game_path(args.asset_root)
     if not math.isfinite(args.light_intensity) or args.light_intensity <= 0:
         raise ValueError("light intensity must be finite and positive")
@@ -182,7 +191,9 @@ def build_plan(args) -> dict:
 def run_build(args, plan) -> dict:
     global unreal
     unreal = importlib.import_module("unreal")
+    validate_report_destination(args.report, _report_input_paths(args))
     check_project_dir(args.project_dir, unreal)
+    assert_current_level_saved(unreal)
     if not args.replace_existing:
         if unreal.EditorAssetLibrary.does_asset_exist(args.map_asset):
             raise RuntimeError("target map already exists; choose a new path or pass --replace-existing")
@@ -245,7 +256,7 @@ def main(argv=None) -> None:
     args = parse_args(argv)
     plan = build_plan(args)
     report = plan if args.dry_run else run_build(args, plan)
-    write_report(args.report, report)
+    write_report(args.report, report, _report_input_paths(args))
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 
