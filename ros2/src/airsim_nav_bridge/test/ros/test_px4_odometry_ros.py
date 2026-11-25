@@ -70,10 +70,10 @@ class VehicleOdometryMessageTests(unittest.TestCase):
         orientation.w = orientation.x = orientation.y = orientation.z = 1.0
         self.assertEqual(tuple(ros_odom_to_px4_vehicle_odometry(source).q), (0.5, 0.5, -0.5, -0.5))
 
-    def test_covariance_retains_diagonals_and_sanitizes_unknown_values(self):
+    def test_covariance_retains_valid_diagonals_and_applies_floor(self):
         source = odometry()
-        for index, value in ((0, 0.25), (7, -1.0), (14, math.nan),
-                             (21, 0.04), (28, 0.09), (35, math.inf)):
+        for index, value in ((0, 0.25), (7, 0.0), (14, 0.015),
+                             (21, 0.04), (28, 0.09), (35, 0.0)):
             source.pose.covariance[index] = value
         source.pose.covariance[1] = 99.0  # Off-diagonal terms are not sent by VehicleOdometry.
         for index, value in ((0, 0.36), (7, 0.49), (14, 0.64)):
@@ -84,6 +84,17 @@ class VehicleOdometryMessageTests(unittest.TestCase):
                                  (msg.velocity_variance, (0.36, 0.49, 0.64))):
             for actual, want in zip(values, expected):
                 self.assertAlmostEqual(actual, want, places=6)
+
+    def test_orientation_variance_is_in_px4_body_axes(self):
+        source = odometry()
+        half = math.sqrt(0.5)
+        source.pose.pose.orientation.x = half
+        source.pose.pose.orientation.w = half
+        for index, value in ((21, 0.01), (28, 0.04), (35, 0.25)):
+            source.pose.covariance[index] = value
+        msg = ros_odom_to_px4_vehicle_odometry(source)
+        for actual, expected in zip(msg.orientation_variance, (0.01, 0.25, 0.04)):
+            self.assertAlmostEqual(actual, expected, places=6)
 
     def test_message_uses_mapped_sample_and_publish_timestamp(self):
         msg = ros_odom_to_px4_vehicle_odometry(odometry(), now_us=30_100_000,
@@ -143,6 +154,13 @@ class VehicleOdometryMessageTests(unittest.TestCase):
                 source = odometry()
                 getattr(source, field).covariance[index] = 1e100
                 ros_odom_to_px4_vehicle_odometry(source, input_has_body_twist=True)
+
+    def test_rejects_negative_and_non_finite_variances(self):
+        for value in (-1.0, math.nan, math.inf, -math.inf):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                source = odometry()
+                source.pose.covariance[35] = value
+                ros_odom_to_px4_vehicle_odometry(source)
 
     def test_rejects_out_of_range_px4_message_timestamps(self):
         for sample in (0, -1, (1 << 64)):
@@ -295,6 +313,48 @@ class OdometryNodeTests(_OdometryNodeTestCase):
         self.wait_until(lambda: len(self.received) == 2)
         self.assertEqual(self.received[-1].timestamp, 30_100_000)
 
+    def test_lagged_clock_pair_does_not_advance_accepted_state(self):
+        self.clocks(10_000_000_000, 30_000_000)
+        self.odom_pub.publish(odometry(10_000_000_000, (0.0, 0.0, 0.0)))
+        self.wait_until(lambda: len(self.received) == 1)
+
+        # A 1 s sample/clock mismatch would otherwise map 11 s into the
+        # future at PX4 time 32 s. Drop it without committing any state.
+        self.clocks(10_000_000_000, 31_000_000)
+        delayed = odometry(11_000_000_000, (0.1, 0.0, 0.0))
+        self.odom_pub.publish(delayed)
+        self.settle()
+        self.assertEqual(len(self.received), 1)
+        self.assertEqual(self.bridge._last_accepted_sample_us, 10_000_000)
+        self.assertEqual(self.bridge._last_output_timestamp_us, 30_000_000)
+
+        # The same ROS input can be retried after /clock catches up.
+        self.clocks(11_000_000_000, 31_000_000)
+        self.odom_pub.publish(delayed)
+        self.wait_until(lambda: len(self.received) == 2)
+        self.assertEqual(self.received[-1].timestamp_sample, 31_000_000)
+
+    def test_speed_limit_uses_mapped_px4_sample_time_and_allows_retry(self):
+        self.clocks(10_000_000_000, 30_000_000)
+        self.odom_pub.publish(odometry(10_000_000_000, (0.0, 0.0, 0.0)))
+        self.wait_until(lambda: len(self.received) == 1)
+
+        # The ROS sample is 0.1 s later, but this stale PX4 reference maps it
+        # only 1 us after the last sample: 1 m / 1 us must fail.
+        self.clocks(10_100_000_000, 30_000_001)
+        moved = odometry(10_100_000_000, (1.0, 0.0, 0.0))
+        self.odom_pub.publish(moved)
+        self.settle()
+        self.assertEqual(len(self.received), 1)
+        self.assertEqual(self.bridge._last_accepted_position, (0.0, 0.0, 0.0))
+
+        # Once PX4 time advances, retrying the same sample gives a plausible
+        # mapped interval and may be published.
+        self.clocks(10_100_000_000, 30_200_000)
+        self.odom_pub.publish(moved)
+        self.wait_until(lambda: len(self.received) == 2)
+        self.assertEqual(self.received[-1].timestamp_sample, 30_200_000)
+
     def test_non_positive_mapped_sample_is_not_published(self):
         self.clocks(100_000_000_000, 100)
         self.odom_pub.publish(odometry(1_000_000_000))
@@ -383,7 +443,8 @@ class OdometryConfigurationTests(unittest.TestCase):
     def test_refuses_invalid_numeric_configuration_at_startup(self):
         api = importlib.import_module('airsim_nav_bridge.fastlio_to_px4_odometry')
         for parameter in ('variance_floor', 'max_initial_position_norm_m',
-                          'max_position_speed_m_s', 'diagnostic_period_s'):
+                          'max_position_speed_m_s', 'diagnostic_period_s',
+                          'max_clock_pairing_skew_s'):
             values = ['0.0', '-0.01', '.nan', '.inf']
             if parameter == 'variance_floor':
                 values += ['1.0e+100', '1.0e-100']

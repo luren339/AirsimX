@@ -20,6 +20,14 @@ class Px4OdometryConversionTests(unittest.TestCase):
         self.assertEqual(self.api().sim_sample_to_px4_us(10_200_000_000, 10_100_000_000, 30_100_000),
                          30_200_000)
 
+    def test_time_mapping_rejects_excess_clock_pairing_skew(self):
+        map_time = self.api().sim_sample_to_px4_us
+        self.assertEqual(map_time(10_050_000_000, 10_000_000_000, 30_000_000,
+                                  max_clock_pairing_skew_s=0.1), 30_050_000)
+        with self.assertRaisesRegex(ValueError, 'clock_pairing_skew'):
+            map_time(11_000_000_000, 10_000_000_000, 31_000_000,
+                     max_clock_pairing_skew_s=0.1)
+
     def test_time_mapping_truncates_nanoseconds_to_microseconds(self):
         self.assertEqual(self.api().sim_sample_to_px4_us(1_234_567_890, 1_234_567_900, 100_000),
                          100_000)
@@ -105,10 +113,25 @@ class Px4OdometryConversionTests(unittest.TestCase):
             (1e200, 0.0, 0.0), sample_us=2, previous_position=(0.0, 0.0, 0.0),
             previous_sample_us=1), 'position_out_of_float32_range')
 
-    def test_covariance_uses_floor_for_zero_negative_and_unknown_values(self):
+    def test_covariance_floor_applies_to_finite_nonnegative_values(self):
         sanitize = self.api()._finite_covariance
-        self.assertEqual(sanitize((0.0, -1.0, math.nan)), (0.01, 0.01, 0.01))
-        self.assertEqual(sanitize((math.inf, -math.inf, 0.5), 0.02), (0.02, 0.02, 0.5))
+        self.assertEqual(sanitize((0.0, 0.01, 0.5), 0.02), (0.02, 0.02, 0.5))
+
+    def test_covariance_rejects_negative_and_non_finite_values(self):
+        sanitize = self.api()._finite_covariance
+        for value in (-1.0, math.nan, math.inf, -math.inf):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                sanitize((0.01, value, 0.5))
+
+    def test_orientation_covariance_is_rotated_from_fixed_to_body_axes(self):
+        rotate = self.api()._orientation_variance_body_axes
+        half = math.sqrt(0.5)
+        covariance = (0.01, 0.0, 0.0,
+                      0.0, 0.04, 0.0,
+                      0.0, 0.0, 0.25)
+        for actual, expected in zip(rotate(covariance, (half, 0.0, 0.0, half)),
+                                    (0.01, 0.25, 0.04)):
+            self.assertAlmostEqual(actual, expected, places=12)
 
     def test_covariance_rejects_finite_float32_overflow(self):
         with self.assertRaises(ValueError):

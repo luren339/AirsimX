@@ -15,6 +15,10 @@ FLOAT32_MIN_POSITIVE = 2.0 ** -149
 PX4_TIMESTAMP_MAX = (1 << 64) - 1
 
 
+class ClockPairingError(ValueError):
+    """A FAST-LIO sample is too far from the latest simulation-clock sample."""
+
+
 def positive_finite_parameter(name: str, value: float) -> float:
     """Validate numeric bridge settings before subscriptions can publish data."""
     value = float(value)
@@ -39,11 +43,25 @@ def _px4_timestamp(value: int, field: str) -> int:
     return value
 
 
-def sim_sample_to_px4_us(sample_stamp_ns: int, sim_clock_ns: int, px4_now_us: int) -> int:
-    """Map an AirSim sample time into PX4's local HRT clock using /clock and sensor_combined."""
+def sim_sample_to_px4_us(
+    sample_stamp_ns: int,
+    sim_clock_ns: int,
+    px4_now_us: int,
+    *,
+    max_clock_pairing_skew_s: float | None = None,
+) -> int:
+    """Map a simulation timestamp to PX4 time, optionally bounding its /clock skew."""
     sample_ns, sim_ns, px4_us = int(sample_stamp_ns), int(sim_clock_ns), int(px4_now_us)
     if sample_ns <= 0 or sim_ns <= 0 or px4_us <= 0:
         raise ValueError("AirSim sample, /clock and PX4 local clock timestamps must be positive")
+    if max_clock_pairing_skew_s is not None:
+        max_skew_s = float(max_clock_pairing_skew_s)
+        if not math.isfinite(max_skew_s) or max_skew_s < 0.0:
+            raise ValueError('max_clock_pairing_skew_s must be finite and non-negative')
+        skew_s = abs(sample_ns - sim_ns) / 1_000_000_000.0
+        if skew_s > max_skew_s:
+            raise ClockPairingError(
+                f'clock_pairing_skew={skew_s:.6f}_s_exceeds_{max_skew_s:.6f}_s')
     sample_us = sample_ns // 1_000
     sim_us = sim_ns // 1_000
     return sample_us + (px4_us - sim_us)
@@ -54,8 +72,53 @@ def _finite_covariance(values, floor: float = 0.01) -> tuple[float, float, float
     result = []
     for value in values:
         value = float(value)
-        result.append(max(value, floor) if math.isfinite(value) else floor)
+        if not math.isfinite(value):
+            raise ValueError('covariance variances must be finite')
+        if value < 0.0:
+            raise ValueError('covariance variances must be non-negative')
+        result.append(max(value, floor))
     return _finite_float32_values(result, 'covariance')
+
+
+def _orientation_variance_body_axes(
+    covariance_fixed: tuple[float, ...],
+    quaternion_body_to_fixed: tuple[float, float, float, float],
+    floor: float = 0.01,
+) -> tuple[float, float, float]:
+    """Rotate a fixed-axis orientation covariance into body axes and return its diagonal."""
+    covariance_values = _finite_float32_values(covariance_fixed, 'orientation covariance')
+    if len(covariance_values) != 9:
+        raise ValueError('orientation covariance must contain a 3x3 matrix')
+
+    qx, qy, qz, qw = map(float, quaternion_body_to_fixed)
+    norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+    if not math.isfinite(norm) or norm < 1e-8:
+        raise ValueError('orientation covariance rotation quaternion is invalid')
+    qx, qy, qz, qw = qx / norm, qy / norm, qz / norm, qw / norm
+
+    # Rotation matrix maps body axes into the fixed parent frame.
+    rotation = (
+        (1.0 - 2.0 * (qy * qy + qz * qz), 2.0 * (qx * qy - qz * qw), 2.0 * (qx * qz + qy * qw)),
+        (2.0 * (qx * qy + qz * qw), 1.0 - 2.0 * (qx * qx + qz * qz), 2.0 * (qy * qz - qx * qw)),
+        (2.0 * (qx * qz - qy * qw), 2.0 * (qy * qz + qx * qw), 1.0 - 2.0 * (qx * qx + qy * qy)),
+    )
+    covariance = tuple(tuple(covariance_values[3 * row + column] for column in range(3))
+                       for row in range(3))
+    # C_body = R_fixed_from_body^T * C_fixed * R_fixed_from_body.
+    diagonal = []
+    for body_axis in range(3):
+        value = math.fsum(
+            rotation[fixed_row][body_axis] * covariance[fixed_row][fixed_column] *
+            rotation[fixed_column][body_axis]
+            for fixed_row in range(3)
+            for fixed_column in range(3)
+        )
+        # An orthonormal rotation can move a variance at float32 max by a few
+        # ulps due to round-off; preserve that representable boundary value.
+        if FLOAT32_MAX < value <= FLOAT32_MAX * (1.0 + 1e-12):
+            value = FLOAT32_MAX
+        diagonal.append(value)
+    return _finite_covariance(diagonal, floor)
 
 
 def ros_odom_to_px4_vehicle_odometry(
@@ -72,7 +135,8 @@ def ros_odom_to_px4_vehicle_odometry(
     local world in NWU axes. PX4 FRD conversion flips Y and Z for both the
     local pose frame and, only when explicitly supplied, body-frame twist.
     FAST-LIO2's pose-only output leaves twist unknown rather than measured zero.
-    Variances use a conservative floor for zero/unknown covariance.
+    Finite non-negative variances use a conservative floor; negative or
+    non-finite covariance entries reject the sample.
     """
     from px4_msgs.msg import VehicleOdometry
 
@@ -118,8 +182,10 @@ def ros_odom_to_px4_vehicle_odometry(
     msg.position_variance = _finite_covariance(
         (odom.pose.covariance[0], odom.pose.covariance[7], odom.pose.covariance[14]), variance_floor
     )
-    msg.orientation_variance = _finite_covariance(
-        (odom.pose.covariance[21], odom.pose.covariance[28], odom.pose.covariance[35]), variance_floor
+    orientation_covariance_indices = (21, 22, 23, 27, 28, 29, 33, 34, 35)
+    msg.orientation_variance = _orientation_variance_body_axes(
+        tuple(odom.pose.covariance[index] for index in orientation_covariance_indices),
+        (qx, qy, qz, qw), variance_floor,
     )
     msg.reset_counter = 0
     msg.quality = 0  # quality is unreported by FAST-LIO2; do not invent it.

@@ -9,6 +9,9 @@
     variance_floor: 0.01
     max_initial_position_norm_m: 5.0
     max_position_speed_m_s: 15.0
+    # Reject sample/clock pairs more than 100 ms apart rather than advancing
+    # PX4 output timestamps from a stale simulation-clock reference.
+    max_clock_pairing_skew_s: 0.1
     diagnostic_period_s: 5.0
     clock_topic: /clock
     px4_time_topic: /fmu/out/sensor_combined

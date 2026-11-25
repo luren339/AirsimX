@@ -12,6 +12,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 
 from .px4_odometry_conversion import (
+    ClockPairingError,
     fastlio_pose_rejection_reason,
     monotonic_px4_output_timestamp,
     positive_finite_parameter,
@@ -29,6 +30,7 @@ class FastLioToPx4Odometry(Node):
         self.declare_parameter('input_has_body_twist', False)
         self.declare_parameter('max_initial_position_norm_m', 5.0)
         self.declare_parameter('max_position_speed_m_s', 15.0)
+        self.declare_parameter('max_clock_pairing_skew_s', 0.1)
         self.declare_parameter('diagnostic_period_s', 5.0)
         self.declare_parameter('clock_topic', '/clock')
         self.declare_parameter('px4_time_topic', '/fmu/out/sensor_combined')
@@ -36,7 +38,8 @@ class FastLioToPx4Odometry(Node):
         self.input_has_body_twist = bool(self.get_parameter('input_has_body_twist').value)
         try:
             for parameter in ('variance_floor', 'max_initial_position_norm_m',
-                              'max_position_speed_m_s', 'diagnostic_period_s'):
+                              'max_position_speed_m_s', 'diagnostic_period_s',
+                              'max_clock_pairing_skew_s'):
                 setattr(self, parameter, positive_finite_parameter(parameter, self.get_parameter(parameter).value))
         except (TypeError, ValueError, OverflowError):
             self.destroy_node()
@@ -108,7 +111,27 @@ class FastLioToPx4Odometry(Node):
                 if self._sim_clock_ns <= 0 or self._px4_now_us <= 0:
                     return
                 sample_sim_ns = int(odom.header.stamp.sec) * 1_000_000_000 + int(odom.header.stamp.nanosec)
-                sample_px4_us = sim_sample_to_px4_us(sample_sim_ns, self._sim_clock_ns, self._px4_now_us)
+                sample_px4_us = sim_sample_to_px4_us(
+                    sample_sim_ns, self._sim_clock_ns, self._px4_now_us,
+                    max_clock_pairing_skew_s=self.max_clock_pairing_skew_s,
+                )
+                mapped_rejection_reason = fastlio_pose_rejection_reason(
+                    position,
+                    sample_us=sample_px4_us,
+                    previous_position=self._last_accepted_position,
+                    previous_sample_us=self._last_output_sample_timestamp_us,
+                    max_initial_position_norm_m=self.max_initial_position_norm_m,
+                    max_position_speed_m_s=self.max_position_speed_m_s,
+                )
+                if mapped_rejection_reason is not None:
+                    now = time.monotonic()
+                    if now - self._last_rejection_log >= self.diagnostic_period_s:
+                        self.get_logger().warning(
+                            'Rejected FAST-LIO odometry on mapped PX4 sample time axis: '
+                            + mapped_rejection_reason
+                        )
+                        self._last_rejection_log = now
+                    return
                 now_us = monotonic_px4_output_timestamp(
                     self._px4_now_us, sample_px4_us, self._last_output_timestamp_us,
                     previous_sample_timestamp_us=self._last_output_sample_timestamp_us,
@@ -129,6 +152,15 @@ class FastLioToPx4Odometry(Node):
                     odom, now_us=now_us, timestamp_sample_us=sample_px4_us, variance_floor=self.variance_floor,
                     input_has_body_twist=self.input_has_body_twist,
                 )
+            except ClockPairingError as exc:
+                self._timestamp_rejection_count += 1
+                now = time.monotonic()
+                if now - self._last_rejection_log >= self.diagnostic_period_s:
+                    self.get_logger().warning(
+                        'Waiting for a fresher simulation-clock sample: ' + str(exc)
+                    )
+                    self._last_rejection_log = now
+                return
             except (TypeError, ValueError, OverflowError) as exc:
                 self.get_logger().error(f'Dropping invalid FAST-LIO odometry: {exc}')
                 return
