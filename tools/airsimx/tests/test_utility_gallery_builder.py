@@ -280,6 +280,21 @@ class LevelSafetyTests(unittest.TestCase):
                 api.EditorLevelLibrary.load_level.assert_not_called()
                 api.EditorLevelLibrary.new_level.assert_not_called()
 
+    def test_dirty_streaming_sublevel_blocks_load_and_create_with_clean_persistent_level(self):
+        streaming_package = SimpleNamespace(get_name=lambda: '/Game/Current/DirtySublevel')
+        for exists in (True, False):
+            with self.subTest(existing_target=exists):
+                api = self.fake_unreal(dirty=False, exists=exists)
+                api.EditorLoadingAndSavingUtils.get_dirty_map_packages = lambda: [streaming_package]
+                api.EditorLoadingAndSavingUtils.save_dirty_packages = mock.Mock()
+                with mock.patch.object(self.builder, 'unreal', api):
+                    with self.assertRaisesRegex(RuntimeError, 'unsaved changes'):
+                        self.builder.load_or_create_level(
+                            SimpleNamespace(map_asset='/Game/Generated/Preview'))
+                api.EditorLevelLibrary.load_level.assert_not_called()
+                api.EditorLevelLibrary.new_level.assert_not_called()
+                api.EditorLoadingAndSavingUtils.save_dirty_packages.assert_not_called()
+
     def test_only_actors_owned_by_the_target_level_are_selected(self):
         target = self.fake_actor('/Game/Generated/Preview')
         sublevel = self.fake_actor('/Game/Shared/Sublevel')
@@ -332,6 +347,43 @@ class DirtyValidatorLevelTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'unsaved changes'):
                     validator.run_validation(args)
             load_level.assert_not_called()
+
+    def test_dirty_streaming_sublevel_is_rejected_before_validator_loads_target(self):
+        sys.path.insert(0, str(TOOLS / 'scenes'))
+        import validate_utility_gallery_preview as validator
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            project = root / 'Project'
+            project.mkdir()
+            build_report = root / 'build.json'
+            build_report.write_text(json.dumps({
+                'map_asset': '/Game/Generated/Preview',
+                'glb_source': str(root / 'scene.glb'),
+                'geometry_metadata': str(root / 'geometry.json'),
+            }))
+            current_package = SimpleNamespace(get_name=lambda: '/Game/Current/CleanPersistent')
+            streaming_package = SimpleNamespace(get_name=lambda: '/Game/Current/DirtySublevel')
+            persistent_level = SimpleNamespace(get_outermost=lambda: current_package)
+            world = SimpleNamespace(get_persistent_level=lambda: persistent_level)
+            load_level = mock.Mock(side_effect=RuntimeError('level switch was called'))
+            save_dirty_packages = mock.Mock()
+            api = SimpleNamespace(
+                EditorLevelLibrary=SimpleNamespace(get_editor_world=lambda: world,
+                                                   load_level=load_level),
+                EditorLoadingAndSavingUtils=SimpleNamespace(
+                    get_dirty_map_packages=lambda: [streaming_package],
+                    save_dirty_packages=save_dirty_packages),
+            )
+            args = SimpleNamespace(project_dir=project, build_report=build_report,
+                                   report=root / 'validation.json',
+                                   map_asset='/Game/Generated/Preview')
+            with mock.patch.object(validator.importlib, 'import_module', return_value=api), \
+                    mock.patch.object(validator, 'check_project_dir'), \
+                    mock.patch.object(validator, 'read_geometry', return_value={'glb_sha256': 'hash'}):
+                with self.assertRaisesRegex(RuntimeError, 'unsaved changes'):
+                    validator.run_validation(args)
+            load_level.assert_not_called()
+            save_dirty_packages.assert_not_called()
 
 
 class ValidatorTargetLevelTests(unittest.TestCase):

@@ -57,7 +57,7 @@ def _unreal_object_paths(obj):
 
 
 def assert_current_level_saved(unreal):
-    """Refuse a level switch while the current persistent map has edits."""
+    """Refuse a level switch while any map package has unsaved edits."""
     level_library = unreal.EditorLevelLibrary
     world = level_library.get_editor_world()
     if world is None:
@@ -75,11 +75,21 @@ def assert_current_level_saved(unreal):
         dirty_packages = unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages()
     except Exception as error:
         raise RuntimeError('cannot query dirty map packages; refusing to switch levels') from error
+    dirty_paths = set()
+    unidentified_dirty_package = False
     for package in dirty_packages:
-        if current_paths & _unreal_object_paths(package):
+        paths = _unreal_object_paths(package)
+        if not paths:
+            unidentified_dirty_package = True
+        dirty_paths.update(paths)
+    if dirty_packages:
+        if unidentified_dirty_package:
             raise RuntimeError(
-                f'current persistent level {sorted(current_paths)[0]} has unsaved changes; '
-                'save it in Unreal Editor before building or validating another level')
+                'one or more dirty map packages could not be identified; '
+                'save or close every dirty level in Unreal Editor before building or validating another level')
+        raise RuntimeError(
+            f'map package(s) {sorted(dirty_paths)} have unsaved changes; '
+            'save every dirty level in Unreal Editor before building or validating another level')
 
 
 def actors_in_map(actors, map_asset):
