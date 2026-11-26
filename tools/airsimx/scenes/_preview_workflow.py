@@ -57,20 +57,11 @@ def _unreal_object_paths(obj):
 
 
 def assert_current_level_saved(unreal):
-    """Refuse a level switch while any map package has unsaved edits."""
+    """Refuse a level switch if Unreal reports any dirty map package."""
     level_library = unreal.EditorLevelLibrary
     world = level_library.get_editor_world()
     if world is None:
         raise RuntimeError('cannot inspect the current editor world; refusing to switch levels')
-    persistent_level = world.get_persistent_level()
-    if persistent_level is None:
-        raise RuntimeError('cannot inspect the current persistent level; refusing to switch levels')
-    current_package = persistent_level.get_outermost()
-    if current_package is None:
-        raise RuntimeError('cannot inspect the current map package; refusing to switch levels')
-    current_paths = _unreal_object_paths(current_package)
-    if not current_paths:
-        raise RuntimeError('cannot identify the current map package; refusing to switch levels')
     try:
         dirty_packages = unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages()
     except Exception as error:

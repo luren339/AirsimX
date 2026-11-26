@@ -285,6 +285,8 @@ class LevelSafetyTests(unittest.TestCase):
         for exists in (True, False):
             with self.subTest(existing_target=exists):
                 api = self.fake_unreal(dirty=False, exists=exists)
+                # Unreal's Python World wrapper does not expose get_persistent_level().
+                api.EditorLevelLibrary.get_editor_world = lambda: SimpleNamespace()
                 api.EditorLoadingAndSavingUtils.get_dirty_map_packages = lambda: [streaming_package]
                 api.EditorLoadingAndSavingUtils.save_dirty_packages = mock.Mock()
                 with mock.patch.object(self.builder, 'unreal', api):
@@ -361,10 +363,9 @@ class DirtyValidatorLevelTests(unittest.TestCase):
                 'glb_source': str(root / 'scene.glb'),
                 'geometry_metadata': str(root / 'geometry.json'),
             }))
-            current_package = SimpleNamespace(get_name=lambda: '/Game/Current/CleanPersistent')
             streaming_package = SimpleNamespace(get_name=lambda: '/Game/Current/DirtySublevel')
-            persistent_level = SimpleNamespace(get_outermost=lambda: current_package)
-            world = SimpleNamespace(get_persistent_level=lambda: persistent_level)
+            # Unreal's Python World wrapper does not expose get_persistent_level().
+            world = SimpleNamespace()
             load_level = mock.Mock(side_effect=RuntimeError('level switch was called'))
             save_dirty_packages = mock.Mock()
             api = SimpleNamespace(
