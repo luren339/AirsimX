@@ -161,7 +161,7 @@ msr::airlib::ProjectionMatrix APIPCamera::getProjectionMatrix(const APIPCamera::
         }
         else {
             float halfFov = Utils::degreesToRadians(capture->FOVAngle) / 2;
-            if ((int32)ERHIZBuffer::IsInverted) {
+            if constexpr ((int32)ERHIZBuffer::IsInverted) {
                 proj_mat_transpose = FReversedZPerspectiveMatrix(
                     halfFov,
                     halfFov,

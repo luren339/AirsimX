@@ -1,4 +1,5 @@
 # Common setup instructions shared by all AirSim CMakeLists.
+include("${CMAKE_CURRENT_LIST_DIR}/CXX17Filesystem.cmake")
 
 macro(CommonTargetLink)
     target_link_libraries(${PROJECT_NAME} ${CMAKE_THREAD_LIBS_INIT})
@@ -58,8 +59,17 @@ macro(CommonSetup)
 
             if (${CMAKE_CXX_COMPILER_ID} MATCHES "Clang")
                 set(CMAKE_CXX_FLAGS "-stdlib=libc++ -Wno-documentation -Wno-unknown-warning-option ${CMAKE_CXX_FLAGS}")
-                find_package(LLVM REQUIRED CONFIG)
-                set(CXX_EXP_LIB "-L${LLVM_LIBRARY_DIRS} -lc++fs -ferror-limit=10")
+                # No LLVM APIs are linked here. UE's bundled Clang need not
+                # ship LLVMConfig.cmake. Keep libc++ 8 support by probing the
+                # actual directory_iterator link and using libc++fs only when
+                # the active libc++ keeps filesystem in that separate library.
+                airsim_detect_cxx17_filesystem_extra_library(
+                    AIRSIM_CXX17_FILESYSTEM_EXTRA_LIBRARY)
+                set(CXX_EXP_LIB "-ferror-limit=10")
+                if(AIRSIM_CXX17_FILESYSTEM_EXTRA_LIBRARY)
+                    set(CXX_EXP_LIB
+                        "${AIRSIM_CXX17_FILESYSTEM_EXTRA_LIBRARY};${CXX_EXP_LIB}")
+                endif()
             else()
                 set(CXX_EXP_LIB "-lstdc++fs -fmax-errors=10 -Wnoexcept -Wstrict-null-sentinel")
             endif ()
