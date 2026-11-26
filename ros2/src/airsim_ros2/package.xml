@@ -7,7 +7,10 @@
   <maintainer email="naipi11@users.noreply.github.com">AirsimX maintainers</maintainer>
   <license>MIT</license>
 
+  <buildtool_depend>ament_python</buildtool_depend>
+
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>rosgraph_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
@@ -16,6 +19,7 @@
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>airsim_interfaces</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 

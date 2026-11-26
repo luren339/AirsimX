@@ -16,6 +16,11 @@ class VehicleClient:
             ip = "127.0.0.1"
         self.client = RpcClient(ip, port, timeout=timeout_value)
 
+    @property
+    def connection_generation(self):
+        """Identify the current socket even when an idle disconnect was transparent."""
+        return self.client.connection_generation
+
     def close(self):
         """Close this client's connection and fail outstanding calls without replaying them."""
         self.client.close()
