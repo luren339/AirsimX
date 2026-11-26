@@ -1,3 +1,5 @@
+from glob import glob
+
 from setuptools import setup
 
 package_name = 'airsim_nav_bridge'
@@ -9,8 +11,10 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/config', glob('config/*.yaml')),
     ],
     install_requires=['setuptools'],
+    tests_require=['pytest'],
     zip_safe=True,
     maintainer='naipi11',
     maintainer_email='naipi11@users.noreply.github.com',
@@ -20,6 +24,7 @@ setup(
         'console_scripts': [
             'airsim_source = airsim_nav_bridge.source_node:main',
             'airsim_truth_recorder = airsim_nav_bridge.truth_recorder:main',
+            'fastlio_to_px4_odometry = airsim_nav_bridge.fastlio_to_px4_odometry:main',
         ],
     },
 )

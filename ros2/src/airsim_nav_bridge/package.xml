@@ -8,7 +8,8 @@
     for a Gazebo world run on AirSim (Unreal Engine). It publishes the topics
     such a stack consumes (simulation clock, 3D lidar, barometer, magnetometer,
     ground truth) from the AirSim Python API, so the navigation package itself
-    needs no change.
+    needs no change. An optional FAST-LIO2 estimate-to-PX4 odometry executable
+    uses externally supplied compatible px4_msgs.
   </description>
   <maintainer email="naipi11@users.noreply.github.com">naipi11</maintainer>
   <license>MIT</license>
@@ -21,6 +22,11 @@
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
+
+  <!-- Optional DDS example only: enable when resolving its dependencies.
+       Supply px4_msgs release/1.17 for the documented PX4 v1.17.0 target. -->
+  <exec_depend condition="$AIRSIMX_WITH_PX4_ODOMETRY == '1'">px4_msgs</exec_depend>
+  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_python</build_type>
