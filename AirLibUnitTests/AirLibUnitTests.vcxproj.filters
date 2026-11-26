@@ -33,6 +33,12 @@
     <ClInclude Include="SimpleFlightTest.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="LidarSettingsTest.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="LidarScanPatternTest.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="SettingsTest.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>

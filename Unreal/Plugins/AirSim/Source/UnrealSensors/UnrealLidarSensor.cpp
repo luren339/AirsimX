@@ -7,6 +7,10 @@
 #include "NedTransform.h"
 #include "DrawDebugHelpers.h"
 
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+
 // ctor
 UnrealLidarSensor::UnrealLidarSensor(const AirSimSettings::LidarSetting& setting,
                                      AActor* actor, const NedTransform* ned_transform)
@@ -19,6 +23,22 @@ UnrealLidarSensor::UnrealLidarSensor(const AirSimSettings::LidarSetting& setting
 void UnrealLidarSensor::createLasers()
 {
     msr::airlib::LidarSimpleParams params = getParams();
+    scan_pattern_mode_ = LivoxScanPattern::parseSamplingMode(params.scan_pattern_mode);
+
+    if (!params.scan_pattern_file.empty()) {
+        std::string error;
+        if (!scan_pattern_.loadCsv(params.scan_pattern_file, error)) {
+            UAirBlueprintLib::LogMessageString("Lidar scan pattern:", error, LogDebugLevel::Failure);
+            throw std::runtime_error(error);
+        }
+        use_scan_pattern_ = true;
+        UAirBlueprintLib::LogMessageString("Lidar scan pattern:",
+                                           "Loaded " + std::to_string(scan_pattern_.size()) + " ordered samples",
+                                           LogDebugLevel::Success);
+    }
+    else if (scan_pattern_mode_ != LivoxScanSamplingMode::Sequential) {
+        throw std::runtime_error("ScanPatternMode requires ScanPatternFile");
+    }
 
     const auto number_of_lasers = params.number_of_channels;
 
@@ -39,6 +59,14 @@ void UnrealLidarSensor::createLasers()
     }
 }
 
+void UnrealLidarSensor::resetImplementation()
+{
+    // Reset ordered sampling before the base reset publishes its first output.
+    scan_pattern_state_.reset();
+    current_horizontal_angle_ = 0.0f;
+    msr::airlib::LidarSimple::resetImplementation();
+}
+
 // returns a point-cloud for the tick
 void UnrealLidarSensor::getPointCloud(const msr::airlib::Pose& lidar_pose, const msr::airlib::Pose& vehicle_pose,
                                       const msr::airlib::TTimeDelta delta_time, msr::airlib::vector<msr::airlib::real_T>& point_cloud, msr::airlib::vector<int>& segmentation_cloud)
@@ -51,12 +79,59 @@ void UnrealLidarSensor::getPointCloud(const msr::airlib::Pose& lidar_pose, const
 
     // cap the points to scan via ray-tracing; this is currently needed for car/Unreal tick scenarios
     // since SensorBase mechanism uses the elapsed clock time instead of the tick delta-time.
-    constexpr float MAX_POINTS_IN_SCAN = 1e+5f;
+    constexpr uint32 MAX_POINTS_IN_SCAN = 100000;
     uint32 total_points_to_scan = FMath::RoundHalfFromZero(params.points_per_second * delta_time);
+    if (scan_pattern_mode_ == LivoxScanSamplingMode::FullFovUniform) {
+        const std::size_t fixed_sample_count = LivoxScanPattern::sampleCountForFullFov(
+            params.points_per_second, static_cast<double>(params.update_frequency));
+        total_points_to_scan = static_cast<uint32>(
+            std::min<std::size_t>(fixed_sample_count, static_cast<std::size_t>(MAX_POINTS_IN_SCAN)));
+    }
+    else if (use_scan_pattern_) {
+        total_points_to_scan = static_cast<uint32>(scan_pattern_state_.nextSequentialRayCount(
+            params.points_per_second, static_cast<double>(delta_time),
+            static_cast<std::size_t>(MAX_POINTS_IN_SCAN)));
+    }
     if (total_points_to_scan > MAX_POINTS_IN_SCAN) {
         total_points_to_scan = MAX_POINTS_IN_SCAN;
         UAirBlueprintLib::LogMessageString("Lidar: ", "Capping number of points to scan", LogDebugLevel::Failure);
     }
+
+    if (use_scan_pattern_) {
+        const float min_elevation = std::min(params.vertical_FOV_upper, params.vertical_FOV_lower);
+        const float max_elevation = std::max(params.vertical_FOV_upper, params.vertical_FOV_lower);
+
+        for (uint32 i = 0; i < total_points_to_scan; ++i) {
+            const std::size_t pattern_index = scan_pattern_mode_ == LivoxScanSamplingMode::FullFovUniform
+                                                  ? LivoxScanPattern::uniformSampleIndex(i, total_points_to_scan, scan_pattern_.size())
+                                                  : scan_pattern_state_.nextSequentialIndex(scan_pattern_.size());
+            const LivoxScanAngle& sample = scan_pattern_.at(pattern_index);
+
+            // Livox CSV azimuth is positive to the left in a right-handed sensor
+            // frame; AirSim NED has +Y to the right, so invert the yaw direction.
+            const float horizontal_angle = std::fmod(360.0f - sample.azimuth_deg, 360.0f);
+            const float vertical_angle = sample.elevation_deg;
+
+            if (!LivoxScanPattern::isInHorizontalFov(horizontal_angle, params.horizontal_FOV_start, params.horizontal_FOV_end))
+                continue;
+            if (vertical_angle < min_elevation || vertical_angle > max_elevation)
+                continue;
+
+            Vector3r point;
+            int segmentationID = -1;
+            if (shootLaser(lidar_pose, vehicle_pose, 0, horizontal_angle, vertical_angle, params, point, segmentationID)) {
+                point_cloud.emplace_back(point.x());
+                point_cloud.emplace_back(point.y());
+                point_cloud.emplace_back(point.z());
+                segmentation_cloud.emplace_back(segmentationID);
+            }
+        }
+
+        return;
+    }
+
+    if (number_of_lasers == 0)
+        return;
 
     // calculate number of points needed for each laser/channel
     const uint32 points_to_scan_with_one_laser = FMath::RoundHalfFromZero(total_points_to_scan / float(number_of_lasers));
@@ -104,7 +179,7 @@ void UnrealLidarSensor::getPointCloud(const msr::airlib::Pose& lidar_pose, const
 // simulate shooting a laser via Unreal ray-tracing.
 bool UnrealLidarSensor::shootLaser(const msr::airlib::Pose& lidar_pose, const msr::airlib::Pose& vehicle_pose,
                                    const uint32 laser, const float horizontal_angle, const float vertical_angle,
-                                   const msr::airlib::LidarSimpleParams params, Vector3r& point, int& segmentationID)
+                                   const msr::airlib::LidarSimpleParams& params, Vector3r& point, int& segmentationID)
 {
     // start position
     Vector3r start = VectorMath::add(lidar_pose, vehicle_pose).position;

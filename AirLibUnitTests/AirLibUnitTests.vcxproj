@@ -285,6 +285,8 @@
     <ClInclude Include="CelestialTests.hpp" />
     <ClInclude Include="QuaternionTest.hpp" />
     <ClInclude Include="SettingsTest.hpp" />
+    <ClInclude Include="LidarSettingsTest.hpp" />
+    <ClInclude Include="LidarScanPatternTest.hpp" />
     <ClInclude Include="SimpleFlightTest.hpp" />
     <ClInclude Include="TestBase.hpp" />
     <ClInclude Include="WorkerThreadTest.hpp" />

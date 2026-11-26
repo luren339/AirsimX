@@ -7,6 +7,7 @@
 #include "GameFramework/Actor.h"
 #include "sensors/lidar/LidarSimple.hpp"
 #include "NedTransform.h"
+#include "LivoxScanPattern.hpp"
 
 // UnrealLidarSensor implementation that uses Ray Tracing in Unreal.
 // The implementation uses a model similar to CARLA Lidar implementation.
@@ -21,6 +22,7 @@ public:
                       AActor* actor, const NedTransform* ned_transform);
 
 protected:
+    virtual void resetImplementation() override;
     virtual void getPointCloud(const msr::airlib::Pose& lidar_pose, const msr::airlib::Pose& vehicle_pose,
                                msr::airlib::TTimeDelta delta_time, msr::airlib::vector<msr::airlib::real_T>& point_cloud, msr::airlib::vector<int>& segmentation_cloud) override;
 
@@ -31,7 +33,7 @@ private:
     void createLasers();
     bool shootLaser(const msr::airlib::Pose& lidar_pose, const msr::airlib::Pose& vehicle_pose,
                     const uint32 channel, const float horizontal_angle, const float vertical_angle,
-                    const msr::airlib::LidarSimpleParams params, Vector3r& point, int& segmentationID);
+                    const msr::airlib::LidarSimpleParams& params, Vector3r& point, int& segmentationID);
 
 private:
     AActor* actor_;
@@ -39,4 +41,8 @@ private:
 
     msr::airlib::vector<msr::airlib::real_T> laser_angles_;
     float current_horizontal_angle_ = 0.0f;
+    LivoxScanPattern scan_pattern_;
+    LivoxScanPatternState scan_pattern_state_;
+    bool use_scan_pattern_ = false;
+    LivoxScanSamplingMode scan_pattern_mode_ = LivoxScanSamplingMode::Sequential;
 };
